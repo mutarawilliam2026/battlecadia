@@ -8,6 +8,7 @@ import {
   BadRequestError,
 } from "@channel3/sdk";
 import type { Contender } from "./types";
+import { dedupeContenders } from "./dedupe";
 
 // ---------------------------------------------------------------------------
 // The single Channel3 boundary. Pages call `searchContenders` and get back OUR
@@ -35,9 +36,13 @@ export class ContenderSearchError extends Error {
   }
 }
 
-// Roughly 10 contenders per arena. Max the API allows is 30 (docs), we don't
-// need it — fewer results, fewer credits.
-const RESULT_LIMIT = 10;
+// Ask for the maximum the API allows. Pricing is per CALL, not per result, so
+// 30 costs exactly what 10 costs — and we need the headroom because duplicates
+// get thrown away before the battle (see lib/dedupe.ts).
+const RESULT_LIMIT = 30;
+
+// How many survivors actually enter a battle. 10 contenders = 9 matchups.
+const MAX_CONTENDERS = 10;
 
 // Structural subset of Channel3's `ProductDetail` — only the fields we map.
 // A ProductDetail is assignable to this, so the SDK's real type still guards us.
@@ -114,6 +119,8 @@ function toContender(p: Channel3Product): Contender {
  * hard constraints; `mode: "agentic"` lets Channel3's own LLM plan structured
  * sub-searches from that sentence (the constraint-parsing search we need).
  *
+ * Over-fetches, drops duplicates, then returns at most MAX_CONTENDERS.
+ *
  * Metered: one credit per call. Call this ONLY for the arena the user opened.
  */
 export async function searchContenders(query: string): Promise<Contender[]> {
@@ -124,7 +131,8 @@ export async function searchContenders(query: string): Promise<Contender[]> {
       limit: RESULT_LIMIT,
       config: { mode: "agentic" },
     });
-    return page.products.map(toContender);
+    const contenders = page.products.map(toContender);
+    return dedupeContenders(contenders).slice(0, MAX_CONTENDERS);
   } catch (err) {
     if (err instanceof RateLimitError) {
       throw new ContenderSearchError(

@@ -1,19 +1,21 @@
 import Link from "next/link";
 import { getPrompt } from "@/lib/memory";
 import { searchContenders, ContenderSearchError } from "@/lib/channel3";
+import { MIN_CONTENDERS, shuffle } from "@/lib/battle";
+import { BattleArena } from "./battle";
 import type { Contender } from "@/lib/types";
 
 // Never prerender at build time — this route calls a METERED API. Rendering must
 // only happen on a real request, for the one arena the user opened.
 export const dynamic = "force-dynamic";
 
-// CONTENDERS PAGE — /arenas/{promptId}/{arenaId}
-// Shows the products competing inside one arena.
-// This is where the battle loop will eventually run.
+// BATTLE PAGE — /arenas/{promptId}/{arenaId}
+// Runs one arena's winner-stays bracket to a single champion.
+// Tapping a card picks the winner of that matchup.
 //
-// Searches Channel3 for the opened arena and lists what
-// comes back: image, title, brand, price. Nothing interactive yet.
-export default async function ContendersPage({
+// Server half: one search, deduped, shuffled. The bracket itself is a client
+// component (./battle) — it gets the contenders as a prop and fetches nothing.
+export default async function BattlePage({
   params,
 }: {
   params: Promise<{ promptId: string; arenaId: string }>;
@@ -57,63 +59,30 @@ export default async function ContendersPage({
     );
   }
 
+  if (contenders.length < MIN_CONTENDERS) {
+    return (
+      <Shell backHref={`/arenas/${prompt.id}`} arenaLabel={arena.label}>
+        {/* Distinct from an error: the search worked, there just isn't enough
+            here to make a bracket worth playing. */}
+        <p className="mt-6 text-gray-600">
+          Not enough contenders for a battle — only {contenders.length} distinct{" "}
+          {contenders.length === 1 ? "product" : "products"} came back. Try
+          another arena.
+        </p>
+      </Shell>
+    );
+  }
+
+  // Shuffle HERE, not in the client component: a Math.random() call inside a
+  // useState initializer would run once during SSR and again on hydration and
+  // produce two different orders.
+  const lineup = shuffle(contenders);
+
   return (
     <Shell backHref={`/arenas/${prompt.id}`} arenaLabel={arena.label}>
-      <p className="text-sm text-gray-500">
-        Searched: <span className="italic">{arena.searchQuery}</span>
-      </p>
-
-      {contenders.length === 0 ? (
-        // Distinct from an error: the search succeeded, nothing matched.
-        <p className="mt-6 text-gray-600">
-          No products found for this arena.
-        </p>
-      ) : (
-        <ul className="mt-6 flex flex-col gap-3">
-          {contenders.map((c) => (
-            <li
-              key={c.id}
-              className="flex items-center gap-4 rounded border border-gray-200 p-3"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={c.imageUrl ?? ""}
-                alt={c.title}
-                width={64}
-                height={64}
-                className="h-16 w-16 flex-shrink-0 rounded bg-gray-100 object-contain"
-              />
-              <div className="min-w-0">
-                <p className="truncate font-medium">{c.title}</p>
-                <p className="text-sm text-gray-500">{c.brand ?? "—"}</p>
-                <p className="text-sm">{formatPrice(c.price)}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <BattleArena contenders={lineup} promptId={prompt.id} />
     </Shell>
   );
-}
-
-function formatPrice(price: Contender["price"]): string {
-  if (!price) return "Price unavailable";
-  try {
-    const formatted = new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: price.currency,
-    }).format(price.amount);
-    if (price.compareAt && price.compareAt > price.amount) {
-      const was = new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: price.currency,
-      }).format(price.compareAt);
-      return `${formatted} (was ${was})`;
-    }
-    return formatted;
-  } catch {
-    return `${price.amount} ${price.currency}`;
-  }
 }
 
 function SearchError({ err }: { err: unknown }) {
