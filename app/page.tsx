@@ -1,65 +1,80 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+
+// PROMPT PAGE — /
+// Where the user describes what they're shopping for.
+// Submitting generates the arenas and opens /arenas/{promptId}.
+//
+// A textarea and a submit button. On submit we POST the text,
+// get back a promptId, and navigate to its arenas page.
+//
+// Deliberately SUBMIT-ONLY: no search-as-you-type, no effect-triggered calls.
+// Everything downstream is metered, so nothing fires until the user acts.
+export default function PromptPage() {
+  const router = useRouter();
+  const [text, setText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (submitting) return;
+    const trimmed = text.trim();
+    if (!trimmed) {
+      setError("Type what you're looking for first.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: trimmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data?.error ?? "Something went wrong.");
+        setSubmitting(false);
+        return;
+      }
+      router.push(`/arenas/${data.promptId}`);
+      // Leave `submitting` true — we're navigating away.
+    } catch {
+      setError("Network error. Try again.");
+      setSubmitting(false);
+    }
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="mx-auto max-w-2xl p-8">
+      <h1 className="text-2xl font-bold">Battlecadia</h1>
+      <p className="mt-1 text-sm text-gray-500">
+        Describe what you want. We&apos;ll set up the battles.
+      </p>
+
+      <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-3">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={4}
+          placeholder="i want a new pair of shoes for men size 10.5 and under $500"
+          className="w-full rounded border border-gray-300 p-3"
+          disabled={submitting}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="self-start rounded bg-black px-4 py-2 text-white disabled:opacity-50"
+        >
+          {submitting ? "Generating arenas…" : "Find contenders"}
+        </button>
+      </form>
+
+      {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+    </main>
   );
 }
