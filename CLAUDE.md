@@ -41,11 +41,12 @@ Core loop (shopping example):
 ## Agent skills
 
 Skills live in `.agents/skills/` and are pinned in `skills-lock.json`. Add more with
-`npx skills add <owner>/<repo>` (e.g. `Shopify/shopify-ai-toolkit`, `supabase/agent-skills`).
+`npx skills add <owner>/<repo>` (e.g. `supabase/agent-skills`). Currently only the
+Supabase skills are installed.
 
-**Windows requirement:** some skills (notably the Shopify ones) ship deeply nested
-type-definition files that exceed Windows' 260-char path limit and make `git checkout`
-fail with "Filename too long". Before adding or cloning them, enable long paths once:
+**Windows requirement:** some skill repos ship deeply nested type-definition files
+that exceed Windows' 260-char path limit and make `git checkout` fail with "Filename
+too long". Before adding or cloning them, enable long paths once:
 
 ```bash
 git config --global core.longpaths true
