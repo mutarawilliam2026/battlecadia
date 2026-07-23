@@ -25,6 +25,9 @@ Core loop (shopping example):
 - Source lives in `app/` (App Router). Path alias `@/*` maps to repo root.
 - **Backend: Supabase** (see the pinned skills in `.agents/skills/` and `skills-lock.json`).
   Nothing is wired up yet — DB schema, auth, and data access are still to be built.
+- **Product data: Channel3** (`@channel3/sdk`) — a universal product catalog that powers
+  the product-search step (the candidate items that battle in an arena). Server-side only,
+  keyed by `CHANNEL3_API_KEY`. **Gemini** (`GEMINI_API_KEY`) handles the AI/NL parsing.
 - `app/page.tsx` and `app/layout.tsx` are still mostly the create-next-app scaffold.
   Treat them as placeholders to replace when we start building.
 
@@ -41,8 +44,8 @@ Core loop (shopping example):
 ## Agent skills
 
 Skills live in `.agents/skills/` and are pinned in `skills-lock.json`. Add more with
-`npx skills add <owner>/<repo>` (e.g. `supabase/agent-skills`). Currently only the
-Supabase skills are installed.
+`npx skills add <owner>/<repo>` (e.g. `supabase/agent-skills`). Currently installed:
+`channel3-api` (product search/catalog) and the two Supabase skills.
 
 **Windows requirement:** some skill repos ship deeply nested type-definition files
 that exceed Windows' 260-char path limit and make `git checkout` fail with "Filename
