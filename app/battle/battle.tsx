@@ -1,6 +1,6 @@
 "use client";
 
-// BATTLE — the interactive half of /arenas/{promptId}/{arenaId}
+// BATTLE — the interactive half of /battle?q=...
 // Runs the winner-stays bracket over the contenders it is handed.
 // Receives them as a prop; fetches nothing itself.
 
@@ -19,13 +19,7 @@ import {
 } from "@/lib/battle";
 import { formatPrice } from "@/lib/format";
 
-export function BattleArena({
-  contenders,
-  promptId,
-}: {
-  contenders: Contender[];
-  promptId: string;
-}) {
+export function BattleArena({ contenders }: { contenders: Contender[] }) {
   const [battle, setBattle] = useState<Battle>(() => startBattle(contenders));
 
   function pick(winnerId: string) {
@@ -42,7 +36,7 @@ export function BattleArena({
   const champ = champion(battle);
 
   if (isOver(battle)) {
-    return <ChampionScreen champ={champ} battle={battle} promptId={promptId} />;
+    return <ChampionScreen champ={champ} battle={battle} />;
   }
 
   const chall = challenger(battle);
@@ -93,11 +87,9 @@ export function BattleArena({
 function ChampionScreen({
   champ,
   battle,
-  promptId,
 }: {
   champ: Contender;
   battle: Battle;
-  promptId: string;
 }) {
   const defeated = battle.defeatedIds.length;
   return (
@@ -123,8 +115,8 @@ function ChampionScreen({
       </p>
 
       <p className="mt-6 text-center">
-        <Link href={`/arenas/${promptId}`} className="underline">
-          Battle again
+        <Link href="/" className="underline">
+          New battle
         </Link>
       </p>
     </div>

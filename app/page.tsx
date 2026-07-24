@@ -1,52 +1,32 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-
 // PROMPT PAGE — /
 // Where the user describes what they're shopping for.
-// Submitting generates the arenas and opens /arenas/{promptId}.
+// Submitting navigates straight to /battle?q=...
 //
-// A textarea and a submit button. On submit we POST the text,
-// get back a promptId, and navigate to its arenas page.
+// No POST and no stored record: the query travels in the URL, so a battle is
+// shareable and refreshable and there is nothing on the server to expire.
 //
 // Deliberately SUBMIT-ONLY: no search-as-you-type, no effect-triggered calls.
 // Everything downstream is metered, so nothing fires until the user acts.
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+
 export default function PromptPage() {
   const router = useRouter();
   const [text, setText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (submitting) return;
     const trimmed = text.trim();
     if (!trimmed) {
       setError("Type what you're looking for first.");
       return;
     }
-
-    setSubmitting(true);
     setError(null);
-    try {
-      const res = await fetch("/api/prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: trimmed }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data?.error ?? "Something went wrong.");
-        setSubmitting(false);
-        return;
-      }
-      router.push(`/arenas/${data.promptId}`);
-      // Leave `submitting` true — we're navigating away.
-    } catch {
-      setError("Network error. Try again.");
-      setSubmitting(false);
-    }
+    router.push(`/battle?q=${encodeURIComponent(trimmed)}`);
   }
 
   return (
@@ -61,16 +41,14 @@ export default function PromptPage() {
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={4}
-          placeholder="i want a new pair of shoes for men size 10.5 and under $500"
+          placeholder="I want skateboards"
           className="w-full rounded border border-gray-300 p-3"
-          disabled={submitting}
         />
         <button
           type="submit"
-          disabled={submitting}
-          className="self-start rounded bg-black px-4 py-2 text-white disabled:opacity-50"
+          className="self-start rounded bg-black px-4 py-2 text-white"
         >
-          {submitting ? "Generating arenas…" : "Find contenders"}
+          Find contenders
         </button>
       </form>
 
