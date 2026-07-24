@@ -7,8 +7,9 @@ import {
   RateLimitError,
   BadRequestError,
 } from "@channel3/sdk";
-import type { Contender } from "./types";
-import { dedupeContenders } from "./dedupe";
+import type { BuyOffer, Contender, ContenderOffer } from "./types";
+import { mergeDuplicates } from "./dedupe";
+import { lowestPrice } from "./price";
 
 // ---------------------------------------------------------------------------
 // The single Channel3 boundary. Pages call `searchContenders` and get back OUR
@@ -37,12 +38,10 @@ export class ContenderSearchError extends Error {
 }
 
 // Ask for the maximum the API allows. Pricing is per CALL, not per result, so
-// 30 costs exactly what 10 costs — and we need the headroom because duplicates
-// get thrown away before the battle (see lib/dedupe.ts).
+// 30 costs exactly what 10 costs — and we need the headroom, both because
+// duplicate listings collapse together (see lib/dedupe.ts) and because the
+// leftovers become the reserve pool that reseeding draws from.
 const RESULT_LIMIT = 30;
-
-// How many survivors actually enter a battle. 10 contenders = 9 matchups.
-const MAX_CONTENDERS = 10;
 
 // Structural subset of Channel3's `ProductDetail` — only the fields we map.
 // A ProductDetail is assignable to this, so the SDK's real type still guards us.
@@ -56,6 +55,8 @@ type Channel3Product = {
     is_cleaned_image?: boolean;
   }> | null;
   offers?: Array<{
+    domain: string;
+    url: string;
     price: { price: number; currency: string; compare_at_price?: number | null };
     availability: "InStock" | "OutOfStock";
   }> | null;
@@ -87,52 +88,73 @@ function pickImageUrl(images: Channel3Product["images"]): string | null {
   );
 }
 
-/** Lowest in-stock offer price; falls back to lowest overall if none in stock. */
-function pickPrice(offers: Channel3Product["offers"]): Contender["price"] {
-  if (!offers || offers.length === 0) return null;
-  const inStock = offers.filter((o) => o.availability === "InStock");
-  const pool = inStock.length > 0 ? inStock : offers;
-  const best = pool.reduce((a, b) => (b.price.price < a.price.price ? b : a));
-  return {
-    amount: best.price.price,
-    compareAt: best.price.compare_at_price ?? null,
-    currency: best.price.currency,
-  };
+/**
+ * Map merchant offers, DROPPING the url. Offer URLs are short-lived (docs), so
+ * they must never be carried around or shipped to the browser in advance — the
+ * buy screen refetches them at display time via `fetchBuyOffers`.
+ */
+function toOffers(offers: Channel3Product["offers"]): ContenderOffer[] {
+  if (!offers) return [];
+  return offers.map((o) => ({
+    merchantDomain: o.domain,
+    availability: o.availability,
+    price: {
+      amount: o.price.price,
+      compareAt: o.price.compare_at_price ?? null,
+      currency: o.price.currency,
+    },
+  }));
 }
 
 function toContender(p: Channel3Product): Contender {
+  const offers = toOffers(p.offers);
   return {
     id: p.id,
+    // One listing so far. Duplicate listings of the same product get folded in
+    // by mergeDuplicates, which appends their ids here.
+    sourceIds: [p.id],
     title: p.title,
     brand: p.brands?.[0]?.name ?? null,
     imageUrl: pickImageUrl(p.images),
-    // NOTE: offer URLs are deliberately dropped here — no buy button yet, and
-    // offer URLs are short-lived (docs), so they must be refetched at display
-    // time, never carried around. See the caching notes in the slice summary.
-    price: pickPrice(p.offers),
+    price: lowestPrice(offers),
+    offers,
     keyFeatures: p.key_features ?? [],
   };
 }
 
+export type ContenderPage = {
+  contenders: Contender[];
+  /** Pass back in to fetch the next page. Null when the catalog is exhausted. */
+  nextPageToken: string | null;
+};
+
 /**
- * Search Channel3 for one arena's contenders. The query is prose carrying the
- * hard constraints; `mode: "agentic"` lets Channel3's own LLM plan structured
- * sub-searches from that sentence (the constraint-parsing search we need).
+ * Search Channel3 for contenders. `mode: "agentic"` lets Channel3's own LLM
+ * plan structured sub-searches from the user's sentence, so natural-language
+ * constraints ("under $50") are parsed without a separate LLM step.
  *
- * Over-fetches, drops duplicates, then returns at most MAX_CONTENDERS.
+ * Over-fetches and merges duplicate listings; returns ALL survivors. The caller
+ * decides how many enter the battle and how many are held in reserve.
  *
- * Metered: one credit per call. Call this ONLY for the arena the user opened.
+ * Metered: one credit per call. Call this ONLY on an explicit user action.
  */
-export async function searchContenders(query: string): Promise<Contender[]> {
+export async function searchContenders(
+  query: string,
+  pageToken?: string | null,
+): Promise<ContenderPage> {
   const c = getClient();
   try {
     const page = await c.products.search({
       query,
       limit: RESULT_LIMIT,
       config: { mode: "agentic" },
+      // Continues the same result set rather than re-running the search.
+      ...(pageToken ? { page_token: pageToken } : {}),
     });
-    const contenders = page.products.map(toContender);
-    return dedupeContenders(contenders).slice(0, MAX_CONTENDERS);
+    return {
+      contenders: mergeDuplicates(page.products.map(toContender)),
+      nextPageToken: page.next_page_token ?? null,
+    };
   } catch (err) {
     if (err instanceof RateLimitError) {
       throw new ContenderSearchError(
@@ -161,4 +183,67 @@ export async function searchContenders(query: string): Promise<Contender[]> {
       err,
     );
   }
+}
+
+export type BuyListing = {
+  title: string;
+  brand: string | null;
+  imageUrl: string | null;
+  /** Cheapest offer per merchant, cheapest merchant first. */
+  offers: BuyOffer[];
+};
+
+/**
+ * Re-resolve a product's live offers for the buy screen, by every id that was
+ * merged into it.
+ *
+ * FREE endpoint (GET /v1/products/{id}) — unlike search, this costs no credits,
+ * so fanning out across a handful of ids is free. The docs prescribe exactly
+ * this: cache ids, never offer data, and refetch at display time because offer
+ * URLs are short-lived.
+ *
+ * Runs the ids in parallel and tolerates individual failures — one dead id
+ * shouldn't hide the other merchants.
+ */
+export async function fetchBuyListing(ids: string[]): Promise<BuyListing | null> {
+  const c = getClient();
+  const results = await Promise.allSettled(
+    ids.map((id) => c.products.retrieve(id)),
+  );
+
+  const products: Channel3Product[] = [];
+  for (const [i, r] of results.entries()) {
+    if (r.status === "fulfilled") products.push(r.value);
+    else console.error(`[channel3] product ${ids[i]} failed to resolve:`, r.reason);
+  }
+  if (products.length === 0) return null;
+
+  // Cheapest offer per merchant domain across every listing, cheapest first.
+  const best = new Map<string, BuyOffer>();
+  for (const p of products) {
+    for (const o of p.offers ?? []) {
+      const offer: BuyOffer = {
+        merchantDomain: o.domain,
+        url: o.url,
+        availability: o.availability,
+        price: {
+          amount: o.price.price,
+          compareAt: o.price.compare_at_price ?? null,
+          currency: o.price.currency,
+        },
+      };
+      const seen = best.get(offer.merchantDomain);
+      if (!seen || offer.price.amount < seen.price.amount) {
+        best.set(offer.merchantDomain, offer);
+      }
+    }
+  }
+
+  const canonical = products[0];
+  return {
+    title: canonical.title,
+    brand: canonical.brands?.[0]?.name ?? null,
+    imageUrl: pickImageUrl(canonical.images),
+    offers: [...best.values()].sort((a, b) => a.price.amount - b.price.amount),
+  };
 }

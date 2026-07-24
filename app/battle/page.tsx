@@ -9,6 +9,9 @@ import type { Contender } from "@/lib/types";
 // only happen on a real request.
 export const dynamic = "force-dynamic";
 
+// 10 contenders in the opening round = 9 matchups.
+const FIRST_ROUND = 10;
+
 // BATTLE PAGE — /battle?q=I+want+skateboards
 // Searches for the query in the URL and runs a winner-stays bracket over the
 // results until one champion is left.
@@ -30,10 +33,13 @@ export default async function BattlePage({
   if (!query) redirect("/");
 
   let contenders: Contender[];
+  let nextPageToken: string | null = null;
   try {
     // Straight to Channel3, no LLM in between: agentic mode does its own query
     // planning, so it parses "blue headphones under $50" without help.
-    contenders = await searchContenders(query);
+    const page = await searchContenders(query);
+    contenders = page.contenders;
+    nextPageToken = page.nextPageToken;
   } catch (err) {
     return (
       <Shell query={query}>
@@ -61,11 +67,21 @@ export default async function BattlePage({
   // Shuffle HERE, not in the client component: a Math.random() call inside a
   // useState initializer would run once during SSR and again on hydration and
   // produce two different orders.
-  const lineup = shuffle(contenders);
+  const shuffled = shuffle(contenders);
+
+  // The search already paid for all of these. Only the first ROUND fights now;
+  // the rest are the reserve that "More contenders" draws from for free.
+  const lineup = shuffled.slice(0, FIRST_ROUND);
+  const reserve = shuffled.slice(FIRST_ROUND);
 
   return (
     <Shell query={query}>
-      <BattleArena contenders={lineup} />
+      <BattleArena
+        contenders={lineup}
+        reserve={reserve}
+        query={query}
+        pageToken={nextPageToken}
+      />
     </Shell>
   );
 }

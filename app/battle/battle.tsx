@@ -4,11 +4,12 @@
 // Runs the winner-stays bracket over the contenders it is handed.
 // Receives them as a prop; fetches nothing itself.
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import type { Contender } from "@/lib/types";
 import {
   type Battle,
+  type Matchup,
   challenger,
   champion,
   isOver,
@@ -17,10 +18,45 @@ import {
   startBattle,
   totalMatches,
 } from "@/lib/battle";
+import { identityKey } from "@/lib/dedupe";
 import { formatPrice } from "@/lib/format";
+import { loadMoreContenders } from "./actions";
 
-export function BattleArena({ contenders }: { contenders: Contender[] }) {
+/** How many fresh challengers a reseed round brings in. */
+const ROUND_SIZE = 10;
+
+export function BattleArena({
+  contenders,
+  reserve: initialReserve,
+  query,
+  pageToken: initialPageToken,
+}: {
+  contenders: Contender[];
+  /** Fetched in the same search but held back — reseeding costs no credits. */
+  reserve: Contender[];
+  query: string;
+  pageToken: string | null;
+}) {
   const [battle, setBattle] = useState<Battle>(() => startBattle(contenders));
+  const [reserve, setReserve] = useState<Contender[]>(initialReserve);
+  const [pageToken, setPageToken] = useState<string | null>(initialPageToken);
+  const [exhausted, setExhausted] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  // Defeated ACCUMULATES across rounds — the running tally is the reward for
+  // continuing. `battle` only knows about the round it is in.
+  const [carriedDefeated, setCarriedDefeated] = useState(0);
+  const [carriedHistory, setCarriedHistory] = useState<Matchup[]>([]);
+
+  // Every product identity that has already appeared, so a later page can't
+  // reintroduce something the user has seen.
+  const [seenKeys, setSeenKeys] = useState<Set<string>>(
+    () => new Set([...contenders, ...initialReserve].map(identityKey)),
+  );
+
+  const champ = champion(battle);
+  const defeatedTotal = carriedDefeated + battle.defeatedIds.length;
 
   function pick(winnerId: string) {
     const next = resolveMatch(battle, winnerId);
@@ -28,15 +64,98 @@ export function BattleArena({ contenders }: { contenders: Contender[] }) {
 
     // Nowhere to store preference data yet — log it so the shape is visible.
     if (isOver(next)) {
-      console.log("[battle] history", next.history);
+      console.log("[battle] history", [...carriedHistory, ...next.history]);
     }
     setBattle(next);
   }
 
-  const champ = champion(battle);
+  /** Contenders eligible to challenge the reigning champion. */
+  function eligible(pool: Contender[], reigning: Contender): Contender[] {
+    const championKey = identityKey(reigning);
+    const championSources = new Set(reigning.sourceIds);
+    const defeated = new Set([...carriedHistory, ...battle.history].map((m) => m.loserId));
+
+    return pool.filter((c) => {
+      // The champion must never face itself — not under a different listing id,
+      // and not under a merged sibling id either.
+      if (identityKey(c) === championKey) return false;
+      if (c.sourceIds.some((id) => championSources.has(id))) return false;
+      return !c.sourceIds.some((id) => defeated.has(id));
+    });
+  }
+
+  function startRound(challengers: Contender[], nextReserve: Contender[]) {
+    setCarriedDefeated(defeatedTotal);
+    setCarriedHistory([...carriedHistory, ...battle.history]);
+    setReserve(nextReserve);
+    // The reigning champion carries over as contender 0 and defends its slot.
+    setBattle(startBattle([champ, ...challengers]));
+  }
+
+  function moreContenders() {
+    setLoadError(null);
+    const ready = eligible(reserve, champ);
+
+    // Reserve can cover the round — instant, zero API calls.
+    if (ready.length >= ROUND_SIZE) {
+      const taken = ready.slice(0, ROUND_SIZE);
+      const takenIds = new Set(taken.map((c) => c.id));
+      startRound(taken, reserve.filter((c) => !takenIds.has(c.id)));
+      return;
+    }
+
+    // Reserve is short. Nothing left to page through means this really is the end.
+    if (!pageToken) {
+      if (ready.length === 0) {
+        setExhausted(true);
+        return;
+      }
+      const takenIds = new Set(ready.map((c) => c.id));
+      startRound(ready, reserve.filter((c) => !takenIds.has(c.id)));
+      setExhausted(true); // last round we can offer
+      return;
+    }
+
+    // METERED: one credit, and only because the user asked for more.
+    startTransition(async () => {
+      const result = await loadMoreContenders(query, pageToken);
+      if (!result.ok) {
+        setLoadError(result.message);
+        return;
+      }
+
+      const fresh = result.contenders.filter((c) => !seenKeys.has(identityKey(c)));
+      setPageToken(result.nextPageToken);
+      setSeenKeys(new Set([...seenKeys, ...fresh.map(identityKey)]));
+
+      const pool = [...reserve, ...fresh];
+      const ready2 = eligible(pool, champ);
+
+      // Pagination returned nothing usable — stop offering the button.
+      if (ready2.length === 0) {
+        setReserve(pool);
+        setExhausted(true);
+        return;
+      }
+
+      const taken = ready2.slice(0, ROUND_SIZE);
+      const takenIds = new Set(taken.map((c) => c.id));
+      startRound(taken, pool.filter((c) => !takenIds.has(c.id)));
+    });
+  }
 
   if (isOver(battle)) {
-    return <ChampionScreen champ={champ} battle={battle} />;
+    return (
+      <ChampionScreen
+        champ={champ}
+        defeated={defeatedTotal}
+        query={query}
+        exhausted={exhausted}
+        pending={pending}
+        error={loadError}
+        onMore={moreContenders}
+      />
+    );
   }
 
   const chall = challenger(battle);
@@ -78,7 +197,7 @@ export function BattleArena({ contenders }: { contenders: Contender[] }) {
       </div>
 
       <p className="mt-4 text-right text-xs uppercase tracking-widest text-gray-400">
-        {battle.defeatedIds.length} defeated
+        {defeatedTotal} defeated
       </p>
     </div>
   );
@@ -86,12 +205,26 @@ export function BattleArena({ contenders }: { contenders: Contender[] }) {
 
 function ChampionScreen({
   champ,
-  battle,
+  defeated,
+  query,
+  exhausted,
+  pending,
+  error,
+  onMore,
 }: {
   champ: Contender;
-  battle: Battle;
+  defeated: number;
+  query: string;
+  exhausted: boolean;
+  pending: boolean;
+  error: string | null;
+  onMore: () => void;
 }) {
-  const defeated = battle.defeatedIds.length;
+  const vendors = champ.offers.length;
+  // Every listing merged into this product — the buy screen re-resolves them
+  // all to find every shop selling it.
+  const buyHref = `/buy?ids=${encodeURIComponent(champ.sourceIds.join(","))}&q=${encodeURIComponent(query)}`;
+
   return (
     <div className="mt-6">
       <p className="text-xs uppercase tracking-widest text-red-600">Champion</p>
@@ -108,14 +241,45 @@ function ChampionScreen({
         <p className="mt-4 text-center text-lg font-semibold">{champ.title}</p>
         <p className="text-center text-sm text-gray-500">{champ.brand ?? "—"}</p>
         <p className="mt-1 text-center">{formatPrice(champ.price)}</p>
+        {vendors > 1 && (
+          <p className="mt-1 text-center text-xs text-gray-400">
+            {vendors} shops
+          </p>
+        )}
       </div>
 
       <p className="mt-4 text-center text-sm text-gray-500">
         Defeated {defeated} {defeated === 1 ? "contender" : "contenders"}
       </p>
 
+      <div className="mt-6 flex items-center justify-center gap-3">
+        {exhausted ? (
+          <p className="text-sm text-gray-500">
+            No more contenders — this one wins
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={onMore}
+            disabled={pending}
+            className="rounded border-2 border-gray-300 px-4 py-2 disabled:opacity-50"
+          >
+            {pending ? "Finding more…" : "More contenders"}
+          </button>
+        )}
+
+        <Link
+          href={buyHref}
+          className="rounded bg-black px-4 py-2 text-white"
+        >
+          Buy
+        </Link>
+      </div>
+
+      {error && <p className="mt-4 text-center text-sm text-red-600">{error}</p>}
+
       <p className="mt-6 text-center">
-        <Link href="/" className="underline">
+        <Link href="/" className="text-sm underline">
           New battle
         </Link>
       </p>
