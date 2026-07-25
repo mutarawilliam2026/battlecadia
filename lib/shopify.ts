@@ -1,4 +1,5 @@
 import type { Contender } from "./types";
+import { getAccessToken } from "./shopifyAuth";
 
 // ---------------------------------------------------------------------------
 // The single Shopify boundary. Pages call `searchProducts` and get back OUR
@@ -7,11 +8,80 @@ import type { Contender } from "./types";
 //
 // Endpoint + request/response shapes were derived from the live Global Catalog
 // MCP endpoint (shopify.dev/docs/agents), not from memory. JSON-RPC 2.0.
+// Requests are authenticated (Authorization: Bearer) — the anonymous tier is
+// rate-limited to ~3 pages before returning 429.
 // ---------------------------------------------------------------------------
 
 const ENDPOINT = "https://catalog.shopify.com/api/ucp/mcp";
 const PROTOCOL_VERSION = "2026-03-26";
 const DEFAULT_LIMIT = 20;
+
+// A 429 is backed off once (never retried immediately), waiting Retry-After if
+// present, capped so an SSR render can't hang.
+const DEFAULT_BACKOFF_MS = 2000;
+const MAX_BACKOFF_MS = 8000;
+
+/** Thrown when the catalog is still rate-limited after one backed-off retry. */
+export class RateLimitError extends Error {
+  constructor(readonly retryAfterMs: number | null) {
+    super("Global Catalog is rate limited.");
+    this.name = "RateLimitError";
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Retry-After may be seconds or an HTTP date; return ms, capped. */
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const secs = Number(header);
+  if (Number.isFinite(secs)) return Math.min(secs * 1000, MAX_BACKOFF_MS);
+  const when = Date.parse(header);
+  if (!Number.isNaN(when)) return Math.min(Math.max(when - Date.now(), 0), MAX_BACKOFF_MS);
+  return null;
+}
+
+/**
+ * POST to the catalog with a bearer token. Refreshes the token once on 401,
+ * and on 429 backs off (Retry-After, capped) then retries ONCE before throwing
+ * RateLimitError.
+ */
+async function callCatalog(body: object): Promise<Response> {
+  const send = async () => {
+    const token = await getAccessToken();
+    return fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "MCP-Protocol-Version": PROTOCOL_VERSION,
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      // Product data must never be cached.
+      cache: "no-store",
+    });
+  };
+
+  let res = await send();
+
+  // Token rejected — refresh and retry once (not a rate-limit situation).
+  if (res.status === 401) {
+    await getAccessToken(true);
+    res = await send();
+  }
+
+  // Rate limited — back off, then one retry. NEVER retry immediately.
+  if (res.status === 429) {
+    await sleep(parseRetryAfter(res.headers.get("retry-after")) ?? DEFAULT_BACKOFF_MS);
+    res = await send();
+    if (res.status === 429) {
+      throw new RateLimitError(parseRetryAfter(res.headers.get("retry-after")));
+    }
+  }
+
+  return res;
+}
 
 // TODO(before launch): replace this with OUR OWN published UCP agent profile.
 // This is Shopify's sample profile and must not ship to production.
@@ -149,17 +219,7 @@ export async function searchProducts(
     },
   };
 
-  const res = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "MCP-Protocol-Version": PROTOCOL_VERSION,
-    },
-    body: JSON.stringify(body),
-    // Product data must never be cached.
-    cache: "no-store",
-  });
+  const res = await callCatalog(body);
 
   if (!res.ok) {
     throw new Error(`Global Catalog search failed: HTTP ${res.status}`);

@@ -1,4 +1,4 @@
-import { searchProducts } from "./shopify";
+import { searchProducts, RateLimitError } from "./shopify";
 import { mergeDuplicates, identityKey } from "./dedupe";
 import type { Contender } from "./types";
 
@@ -15,6 +15,12 @@ import type { Contender } from "./types";
 
 const ROUND_SIZE = 10;
 const PAGE_LIMIT = 20; // enough that dedupe rarely leaves us short
+
+// The catalog keeps reporting has_next_page:true and handing out cursors even
+// after it has run out of products — later pages just come back empty. So we
+// also stop after this many consecutive fetches that add nothing new, instead
+// of chasing empty pages forever (which would hammer the API).
+const MAX_NO_PROGRESS_FETCHES = 2;
 
 export type FillInput = {
   query: string;
@@ -41,6 +47,12 @@ export type FillResult = {
   cursor: string | null;
   /** True while the catalog still has pages left to fetch. */
   hasMore: boolean;
+  /**
+   * True when a fetch was rate-limited before the round could be built. The
+   * round is empty; everything gathered so far (including carryOver) is
+   * returned as leftover so a retry loses nothing.
+   */
+  rateLimited: boolean;
 };
 
 export async function fillRound({
@@ -56,12 +68,26 @@ export async function fillRound({
   let pool = carryOver.filter((c) => !exclude.has(identityKey(c)));
   let cur = cursor;
   let more = canFetch;
+  let noProgress = 0;
 
-  // Keep paging until the round is full or the catalog is exhausted — no cap
-  // on the number of pages, only on running out of cursor.
+  // Keep paging until the round is full or the catalog stops producing new
+  // products. Not capped by page count — a query with deep data yields dozens
+  // of rounds — only by running out of cursor or hitting empty pages.
   while (pool.length < ROUND_SIZE && more) {
-    const page = await searchProducts(query, { cursor: cur, limit: PAGE_LIMIT });
+    let page;
+    try {
+      page = await searchProducts(query, { cursor: cur, limit: PAGE_LIMIT });
+    } catch (err) {
+      if (err instanceof RateLimitError) {
+        // Stop here WITHOUT advancing the cursor — the same page is retried
+        // next time. Hand back everything gathered so far (carryOver included)
+        // as leftover so a retry starts from the same place and loses nothing.
+        return { round: [], leftover: pool, cursor: cur, hasMore: more, rateLimited: true };
+      }
+      throw err;
+    }
 
+    const before = pool.length;
     const poolKeys = new Set(pool.map(identityKey));
     const fresh = page.contenders.filter((c) => {
       const k = identityKey(c);
@@ -73,6 +99,13 @@ export async function fillRound({
     cur = page.cursor;
     // A null next-cursor (or has_next_page:false) means there are no more pages.
     more = page.hasNextPage && cur !== null;
+
+    // Bail out of empty/all-seen pages rather than chasing them forever.
+    if (pool.length === before) {
+      if (++noProgress >= MAX_NO_PROGRESS_FETCHES) more = false;
+    } else {
+      noProgress = 0;
+    }
   }
 
   return {
@@ -80,6 +113,7 @@ export async function fillRound({
     leftover: pool.slice(ROUND_SIZE),
     cursor: cur,
     hasMore: more,
+    rateLimited: false,
   };
 }
 

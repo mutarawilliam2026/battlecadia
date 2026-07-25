@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { fillRound, shuffle } from "@/lib/fillRound";
-import { BattleArena } from "./battle";
+import { BattleArena, InitialRateLimited } from "./battle";
 
 // BATTLE PAGE — /battle?q=...
 // Server half: fill round 1 and shuffle its draw order (server-side, so the
@@ -20,13 +20,18 @@ export default async function BattlePage({
   const query = q?.trim();
   if (!query) redirect("/");
 
-  const { round, leftover, cursor, hasMore } = await fillRound({
+  const { round, leftover, cursor, hasMore, rateLimited } = await fillRound({
     query,
     cursor: null,
     canFetch: true, // round 1: null cursor means "start", so fetching is allowed
     excludeKeys: [],
     carryOver: [],
   });
+
+  // The initial search was rate-limited — offer a retry instead of a 500.
+  if (rateLimited) {
+    return <InitialRateLimited query={query} />;
+  }
 
   // Need a real bracket to battle. Fewer than 4 distinct products isn't one.
   if (round.length < 4) {

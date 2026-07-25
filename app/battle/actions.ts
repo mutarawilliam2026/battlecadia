@@ -13,6 +13,8 @@ export type MoreRoundResult = {
   cursor: string | null;
   /** True while the catalog still has pages left to fetch. */
   hasMore: boolean;
+  /** True when rate-limited before a round could be built; retry, don't crash. */
+  rateLimited: boolean;
 };
 
 export async function loadMoreContenders(input: {
@@ -22,6 +24,6 @@ export async function loadMoreContenders(input: {
   excludeKeys: string[];
   carryOver: Contender[];
 }): Promise<MoreRoundResult> {
-  const { round, leftover, cursor, hasMore } = await fillRound(input);
-  return { challengers: shuffle(round), leftover, cursor, hasMore };
+  const { round, leftover, cursor, hasMore, rateLimited } = await fillRound(input);
+  return { challengers: shuffle(round), leftover, cursor, hasMore, rateLimited };
 }

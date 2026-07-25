@@ -6,12 +6,43 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { Contender } from "@/lib/types";
 import { identityKey } from "@/lib/dedupe";
 import { formatPrice } from "@/lib/formatPrice";
 import { loadMoreContenders } from "./actions";
 
 type Matchup = { winnerId: string; loserId: string; matchNumber: number };
+
+// Shown when the very first search is rate-limited — re-runs the server render
+// (a fresh search) rather than 500-ing. No battle state exists yet to preserve.
+export function InitialRateLimited({ query }: { query: string }) {
+  const router = useRouter();
+  const [retrying, setRetrying] = useState(false);
+  return (
+    <main className="mx-auto max-w-xl p-8 text-center">
+      <h1 className="text-lg font-semibold">Rate limited</h1>
+      <p className="mt-2 text-gray-600">
+        The catalog is busy right now. Try &ldquo;{query}&rdquo; again in a
+        moment.
+      </p>
+      <button
+        type="button"
+        onClick={() => {
+          setRetrying(true);
+          router.refresh();
+        }}
+        disabled={retrying}
+        className="mt-4 rounded bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+      >
+        {retrying ? "Retrying…" : "Retry"}
+      </button>
+      <Link href="/" className="mt-4 block text-sm underline">
+        New search
+      </Link>
+    </main>
+  );
+}
 
 export function BattleArena({
   query,
@@ -45,6 +76,7 @@ export function BattleArena({
 
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
 
   const challenger = queue[0];
   // More rounds are possible while the catalog has pages left OR we're still
@@ -84,10 +116,19 @@ export function BattleArena({
         excludeKeys: seenKeys,
         carryOver: leftover,
       });
-      // Advance pagination state regardless — this is how the button retires.
+      // Advance pagination state regardless — this is how the button retires,
+      // and it preserves carryOver (res.leftover) across a rate-limited fetch.
       setCursor(res.cursor);
       setHasMore(res.hasMore);
       setLeftover(res.leftover);
+
+      if (res.rateLimited) {
+        // Keep the champion screen intact; the user can retry in a moment.
+        setRateLimited(true);
+        return;
+      }
+      setRateLimited(false);
+
       if (res.challengers.length === 0) {
         // Nothing left to bring; canLoadMore will now be false.
         return;
@@ -112,6 +153,7 @@ export function BattleArena({
         canLoadMore={canLoadMore}
         loadingMore={loadingMore}
         loadError={loadError}
+        rateLimited={rateLimited}
         onMore={loadMore}
       />
     );
@@ -151,6 +193,7 @@ function ChampionScreen({
   canLoadMore,
   loadingMore,
   loadError,
+  rateLimited,
   onMore,
 }: {
   champion: Contender;
@@ -158,6 +201,7 @@ function ChampionScreen({
   canLoadMore: boolean;
   loadingMore: boolean;
   loadError: boolean;
+  rateLimited: boolean;
   onMore: () => void;
 }) {
   return (
@@ -171,7 +215,16 @@ function ChampionScreen({
       <p className="mt-4 text-sm text-gray-600">Defeated {defeated} contenders</p>
 
       <div className="mt-6 flex justify-center gap-3">
-        {canLoadMore ? (
+        {rateLimited ? (
+          <button
+            type="button"
+            onClick={onMore}
+            disabled={loadingMore}
+            className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
+          >
+            {loadingMore ? "Retrying…" : "Retry"}
+          </button>
+        ) : canLoadMore ? (
           <button
             type="button"
             onClick={onMore}
@@ -194,6 +247,12 @@ function ChampionScreen({
           Buy
         </a>
       </div>
+      {rateLimited && (
+        <p className="mt-3 text-sm text-amber-600">
+          Rate limited — try again in a moment. Your champion and progress are
+          safe.
+        </p>
+      )}
       {loadError && (
         <p className="mt-3 text-sm text-red-600">
           Couldn&rsquo;t load more. Try again.
