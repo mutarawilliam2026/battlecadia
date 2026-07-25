@@ -11,7 +11,7 @@ import type { Contender } from "./types";
 
 const ENDPOINT = "https://catalog.shopify.com/api/ucp/mcp";
 const PROTOCOL_VERSION = "2026-03-26";
-const LIMIT = 30;
+const DEFAULT_LIMIT = 20;
 
 // TODO(before launch): replace this with OUR OWN published UCP agent profile.
 // This is Shopify's sample profile and must not ship to production.
@@ -22,6 +22,9 @@ export type SearchResult = {
   contenders: Contender[];
   /** Total matches in the catalog (pagination.total_count), not just this page. */
   totalCount: number;
+  /** Opaque cursor for the next page; null when the catalog is exhausted. */
+  cursor: string | null;
+  hasNextPage: boolean;
 };
 
 // --- Minimal structural view of the response. A real response is assignable to
@@ -46,7 +49,11 @@ type CatalogResponse = {
   result?: {
     structuredContent?: {
       products?: CatalogProduct[];
-      pagination?: { total_count?: number };
+      pagination?: {
+        total_count?: number;
+        cursor?: string | null;
+        has_next_page?: boolean;
+      };
     };
   };
   error?: { code: number; message: string; data?: unknown };
@@ -84,6 +91,8 @@ function toContender(product: CatalogProduct): Contender | null {
 
   return {
     id: product.id,
+    // One listing so far. Dedupe folds in duplicate listings' ids.
+    sourceIds: [product.id],
     variantId: variant.id,
     title: product.title,
     imageUrl: product.media?.[0]?.url ?? null,
@@ -99,16 +108,27 @@ function toContender(product: CatalogProduct): Contender | null {
  * Search the Global Catalog for one query. Always sends US context; adds a
  * structured price filter only when the sentence states a budget. The rest of
  * the sentence rides in `catalog.query` untouched.
+ *
+ * Pass `cursor` (from a previous result) to page through the same search —
+ * verified live: `pagination.cursor` returns the next page with no overlap.
  */
-export async function searchProducts(query: string): Promise<SearchResult> {
+export async function searchProducts(
+  query: string,
+  opts: { cursor?: string | null; limit?: number } = {},
+): Promise<SearchResult> {
   const ceiling = parseBudgetCeiling(query);
+
+  const pagination: Record<string, unknown> = {
+    limit: opts.limit ?? DEFAULT_LIMIT,
+  };
+  if (opts.cursor) pagination.cursor = opts.cursor;
 
   const catalog: Record<string, unknown> = {
     query,
     // address_country avoids some of the mixed-currency mess; currency is a
     // soft localization hint. Neither is a hard filter (verified live).
     context: { address_country: "US", currency: "USD" },
-    pagination: { limit: LIMIT },
+    pagination,
   };
   if (ceiling !== null) {
     catalog.filters = { price: { max: ceiling } };
@@ -156,5 +176,10 @@ export async function searchProducts(query: string): Promise<SearchResult> {
     .map(toContender)
     .filter((c): c is Contender => c !== null);
 
-  return { contenders, totalCount: sc?.pagination?.total_count ?? 0 };
+  return {
+    contenders,
+    totalCount: sc?.pagination?.total_count ?? 0,
+    cursor: sc?.pagination?.cursor ?? null,
+    hasNextPage: sc?.pagination?.has_next_page ?? false,
+  };
 }

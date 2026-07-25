@@ -5,7 +5,13 @@
 // source can be swapped without touching pages.
 
 export type Contender = {
-  id: string; // gid://shopify/p/...
+  id: string; // gid://shopify/p/... — the canonical (cheapest) listing.
+  /**
+   * Every listing merged into this contender, including `id`. Shopify returns
+   * the same product from different merchants as separate ids; dedupe folds
+   * them here so the buy screen (next slice) can re-resolve every seller.
+   */
+  sourceIds: string[];
   variantId: string; // gid://shopify/ProductVariant/...
   title: string;
   imageUrl: string | null;
