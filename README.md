@@ -14,7 +14,7 @@ I noticed how often I wasted 20 minutes just trying to pick a movie or decide wh
 2. AI searches for the products and returns 10 items to compete.
 3. Arenas are created based on the prompt i.e. filters like size and color. No fixed filters like current websites present.
 4. A user selects an arena and the battle begins.
-5. Selecting one product eliminates the other until all 10 items have battled. There are two battle times: winner stays and      knockout rounds.
+5. Selecting one product eliminates the other until all 10 items have battled. There are two battle times: winner stays and knockout rounds.
 6. Once a victor is chosen, the user can buy.
 7. A user doesn't have to wait for the battle to end.
 8. A user is then taken to the buy screen where they may choose from various vendors if any and then click buy.
