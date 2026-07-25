@@ -20,9 +20,10 @@ export default async function BattlePage({
   const query = q?.trim();
   if (!query) redirect("/");
 
-  const { round, leftover, cursor } = await fillRound({
+  const { round, leftover, cursor, hasMore } = await fillRound({
     query,
     cursor: null,
+    canFetch: true, // round 1: null cursor means "start", so fetching is allowed
     excludeKeys: [],
     carryOver: [],
   });
@@ -50,6 +51,7 @@ export default async function BattlePage({
       initialBracket={shuffle(round)}
       initialLeftover={leftover}
       initialCursor={cursor}
+      initialHasMore={hasMore}
     />
   );
 }

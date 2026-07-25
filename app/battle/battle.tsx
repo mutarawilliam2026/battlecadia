@@ -18,12 +18,14 @@ export function BattleArena({
   initialBracket,
   initialLeftover,
   initialCursor,
+  initialHasMore,
 }: {
   query: string;
   /** Already shuffled for draw order (server-side, to match hydration). */
   initialBracket: Contender[];
   initialLeftover: Contender[];
   initialCursor: string | null;
+  initialHasMore: boolean;
 }) {
   const [champion, setChampion] = useState<Contender>(initialBracket[0]);
   const [queue, setQueue] = useState<Contender[]>(initialBracket.slice(1));
@@ -39,12 +41,15 @@ export function BattleArena({
   );
   const [leftover, setLeftover] = useState<Contender[]>(initialLeftover);
   const [cursor, setCursor] = useState<string | null>(initialCursor);
+  const [hasMore, setHasMore] = useState(initialHasMore);
 
-  const [noMore, setNoMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   const challenger = queue[0];
+  // More rounds are possible while the catalog has pages left OR we're still
+  // holding un-battled leftovers. When both run dry, the battle is truly over.
+  const canLoadMore = hasMore || leftover.length > 0;
 
   function pick(winnerId: string) {
     const winner = winnerId === champion.id ? champion : challenger;
@@ -75,19 +80,22 @@ export function BattleArena({
       const res = await loadMoreContenders({
         query,
         cursor,
+        canFetch: hasMore,
         excludeKeys: seenKeys,
         carryOver: leftover,
       });
+      // Advance pagination state regardless — this is how the button retires.
+      setCursor(res.cursor);
+      setHasMore(res.hasMore);
+      setLeftover(res.leftover);
       if (res.challengers.length === 0) {
-        setNoMore(true);
+        // Nothing left to bring; canLoadMore will now be false.
         return;
       }
       // Champion carries over and defends its slot against the new challengers.
       setQueue(res.challengers);
       setRoundTotal(res.challengers.length);
       setSeenKeys((keys) => [...keys, ...res.challengers.map(identityKey)]);
-      setLeftover(res.leftover);
-      setCursor(res.cursor);
     } catch {
       setLoadError(true);
     } finally {
@@ -101,7 +109,7 @@ export function BattleArena({
       <ChampionScreen
         champion={champion}
         defeated={totalDefeated}
-        noMore={noMore}
+        canLoadMore={canLoadMore}
         loadingMore={loadingMore}
         loadError={loadError}
         onMore={loadMore}
@@ -140,14 +148,14 @@ export function BattleArena({
 function ChampionScreen({
   champion,
   defeated,
-  noMore,
+  canLoadMore,
   loadingMore,
   loadError,
   onMore,
 }: {
   champion: Contender;
   defeated: number;
-  noMore: boolean;
+  canLoadMore: boolean;
   loadingMore: boolean;
   loadError: boolean;
   onMore: () => void;
@@ -163,11 +171,7 @@ function ChampionScreen({
       <p className="mt-4 text-sm text-gray-600">Defeated {defeated} contenders</p>
 
       <div className="mt-6 flex justify-center gap-3">
-        {noMore ? (
-          <span className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-500">
-            No more contenders
-          </span>
-        ) : (
+        {canLoadMore ? (
           <button
             type="button"
             onClick={onMore}
@@ -176,6 +180,10 @@ function ChampionScreen({
           >
             {loadingMore ? "Finding…" : "More contenders"}
           </button>
+        ) : (
+          <span className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-500">
+            No more contenders
+          </span>
         )}
         <a
           href={champion.checkoutUrl}

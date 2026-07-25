@@ -7,18 +7,21 @@ import type { Contender } from "@/lib/types";
 // contenders" click, never from an effect, and never retried automatically.
 
 export type MoreRoundResult = {
-  /** Fresh challengers, shuffled for draw order. Empty means no more. */
+  /** Fresh challengers, shuffled for draw order. Empty means none were left. */
   challengers: Contender[];
   leftover: Contender[];
   cursor: string | null;
+  /** True while the catalog still has pages left to fetch. */
+  hasMore: boolean;
 };
 
 export async function loadMoreContenders(input: {
   query: string;
   cursor: string | null;
+  canFetch: boolean;
   excludeKeys: string[];
   carryOver: Contender[];
 }): Promise<MoreRoundResult> {
-  const { round, leftover, cursor } = await fillRound(input);
-  return { challengers: shuffle(round), leftover, cursor };
+  const { round, leftover, cursor, hasMore } = await fillRound(input);
+  return { challengers: shuffle(round), leftover, cursor, hasMore };
 }
