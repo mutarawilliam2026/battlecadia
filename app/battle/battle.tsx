@@ -1,14 +1,14 @@
 "use client";
 
-// BATTLE — the interactive half of /battle?q=...
-// BattleScreen wraps the Refine panel and the winner-stays loop. Any refinement
-// change navigates to a new /battle URL; the server re-renders with a fresh
-// pool, and keying the loop on the refinement signature restarts it cleanly
-// (champion cleared, counter back to 01/09, defeated to zero). Client state
-// only, no persistence.
+// BATTLE — the interactive half of /battle?q=... in the arcade language.
+// One stateful component owns the whole run: the winner-stays bracket, a
+// client-side undo stack, early "crown the current leader", the shatter
+// animation on each elimination, and the OUT well. It is keyed on the
+// refinement signature by the server page, so changing a filter remounts a
+// fresh battle. Client state only, no persistence.
 
-import { useState } from "react";
-import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type {
   AppliedChip,
   Contender,
@@ -29,11 +29,27 @@ import {
   shuffle,
   startBattle,
 } from "@/lib/battle";
-import { refineKey } from "@/lib/refine";
-import { RefineBar } from "./refine";
+import { RefinePanel } from "./refine";
 import { loadMorePage, fetchWatchProviders } from "./actions";
 
 const ROUND_SIZE = 10;
+
+// Tile palette for eliminated contenders (OUT well) and shatter shards, keyed
+// by a contender's position in the running pool so a film keeps one colour.
+const PALETTE = ["#4a90c2", "#6aa84f", "#9a6b3f", "#8c8f94", "#d4a437", "#b3423f"];
+
+/** A full snapshot of the run, pushed before each move so UNDO can restore it. */
+type Snap = {
+  battle: Battle;
+  buffer: Contender[];
+  page: number;
+  pages: number;
+  roundBase: number;
+  roundMatches: number;
+  crowned: boolean;
+};
+
+type Side = "champion" | "challenger";
 
 export function BattleScreen({
   query,
@@ -49,74 +65,18 @@ export function BattleScreen({
   query: string;
   plan: SearchPlan;
   refinements: Refinements;
-  /** Refinable axes for the current pool, precomputed server-side. */
   facets: Facet[];
-  /** Active refinements resolved to chip labels, server-side. */
   applied: AppliedChip[];
-  /** Already shuffled for draw order (server-side, to match hydration). */
   initialContenders: Contender[];
   initialBuffer: Contender[];
   initialPage: number;
   totalPages: number;
 }) {
+  const router = useRouter();
+
   const pool = [...initialContenders, ...initialBuffer];
+  const runnable = pool.length >= MIN_CONTENDERS;
 
-  return (
-    <main className="mx-auto w-full max-w-3xl flex-1 p-6">
-      <div className="flex items-baseline justify-between">
-        <Link href="/" className="text-sm underline">
-          ← New search
-        </Link>
-      </div>
-
-      <div className="mt-4">
-        <RefineBar
-          query={query}
-          refinements={refinements}
-          facets={facets}
-          applied={applied}
-        />
-      </div>
-
-      {pool.length < MIN_CONTENDERS ? (
-        <div className="mt-8 text-center">
-          <h1 className="text-lg font-semibold">
-            Only {pool.length} {pool.length === 1 ? "film" : "films"} match
-          </h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Remove a filter above to widen the pool.
-          </p>
-        </div>
-      ) : (
-        <BattleArena
-          key={refineKey(refinements)}
-          plan={plan}
-          refinements={refinements}
-          initialContenders={initialContenders}
-          initialBuffer={initialBuffer}
-          initialPage={initialPage}
-          totalPages={totalPages}
-        />
-      )}
-    </main>
-  );
-}
-
-function BattleArena({
-  plan,
-  refinements,
-  initialContenders,
-  initialBuffer,
-  initialPage,
-  totalPages,
-}: {
-  plan: SearchPlan;
-  refinements: Refinements;
-  initialContenders: Contender[];
-  initialBuffer: Contender[];
-  initialPage: number;
-  totalPages: number;
-}) {
   const [battle, setBattle] = useState<Battle>(() =>
     startBattle(initialContenders),
   );
@@ -124,27 +84,71 @@ function BattleArena({
   const [page, setPage] = useState(initialPage);
   const [pages, setPages] = useState(totalPages);
 
-  // The counter restarts each round; these track where the current round began
-  // (in global matches) and how many matchups it holds.
+  // Counter restarts each round; these anchor where the current round began.
   const [roundBase, setRoundBase] = useState(0);
   const [roundMatches, setRoundMatches] = useState(
     Math.max(initialContenders.length - 1, 0),
   );
 
+  const [past, setPast] = useState<Snap[]>([]);
+  const [shatter, setShatter] = useState<{ side: Side; color: string } | null>(null);
+  const [crowned, setCrowned] = useState(false);
+  const [refineOpen, setRefineOpen] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   const champ = champion(battle);
   const chall = challenger(battle);
-  const over = isOver(battle);
-
+  const over = isOver(battle) || crowned;
   const canLoadMore = buffer.length > 0 || page < pages;
 
-  function pick(winnerId: number) {
-    const next = resolveMatch(battle, winnerId);
-    if (next === battle) return; // not a valid pick for this matchup
-    if (isOver(next)) console.log("[battle] history", next.history);
-    setBattle(next);
+  const colorFor = (id: number) => {
+    const i = battle.contenders.findIndex((c) => c.id === id);
+    return PALETTE[(i < 0 ? 0 : i) % PALETTE.length];
+  };
+
+  function snapshot(): Snap {
+    return { battle, buffer, page, pages, roundBase, roundMatches, crowned };
+  }
+
+  function pick(side: Side) {
+    if (shatter || over || !chall) return;
+    const winner = side === "champion" ? champ : chall;
+    const loser = side === "champion" ? chall : champ;
+    const before = snapshot();
+    // The LOSING card shatters, then the match resolves and the next steps up.
+    setShatter({
+      side: side === "champion" ? "challenger" : "champion",
+      color: colorFor(loser.id),
+    });
+    setTimeout(() => {
+      setShatter(null);
+      setPast((p) => [...p, before]);
+      setBattle(resolveMatch(battle, winner.id));
+    }, 400);
+  }
+
+  function undo() {
+    if (shatter) return;
+    if (!past.length) {
+      router.push("/");
+      return;
+    }
+    const prev = past[past.length - 1];
+    setPast(past.slice(0, -1));
+    setBattle(prev.battle);
+    setBuffer(prev.buffer);
+    setPage(prev.page);
+    setPages(prev.pages);
+    setRoundBase(prev.roundBase);
+    setRoundMatches(prev.roundMatches);
+    setCrowned(prev.crowned);
+  }
+
+  function crown() {
+    if (over) return;
+    setPast((p) => [...p, snapshot()]);
+    setCrowned(true);
   }
 
   async function loadMore() {
@@ -166,22 +170,25 @@ function BattleArena({
         ]);
         const fresh = res.contenders.filter((c) => !seen.has(c.id));
         buf = [...buf, ...fresh];
-        if (fresh.length === 0) break; // a page with nothing new — stop paging
+        if (fresh.length === 0) break;
       }
 
       const excluded = new Set([champ.id, ...battle.defeatedIds]);
       const take = buf.slice(0, ROUND_SIZE);
       const challengers = shuffle(take.filter((c) => !excluded.has(c.id)));
+      const before = snapshot();
 
       setBuffer(buf.slice(take.length));
       setPage(pg);
       setPages(tp);
 
-      if (challengers.length === 0) return; // nothing left; canLoadMore now false
+      if (challengers.length === 0) return; // nothing new — stay crowned
 
+      setPast((p) => [...p, before]);
       setRoundBase(battle.history.length);
       setRoundMatches(challengers.length);
       setBattle(addContenders(battle, challengers));
+      setCrowned(false);
     } catch {
       setLoadError(true);
     } finally {
@@ -189,180 +196,555 @@ function BattleArena({
     }
   }
 
-  if (over) {
-    return (
-      <ChampionScreen
-        champ={champ}
-        defeated={battle.defeatedIds.length}
-        canLoadMore={canLoadMore}
-        loadingMore={loadingMore}
-        loadError={loadError}
-        onMore={loadMore}
-      />
-    );
-  }
+  // Keyboard: arrows pick, Backspace undoes. A ref keeps the listener bound to
+  // the latest closures without re-subscribing every render. pick/undo guard
+  // their own preconditions (shatter in flight, run over), so onKey just routes.
+  const handlers = useRef({ pick, undo });
+  useEffect(() => {
+    handlers.current = { pick, undo };
+  });
+  useEffect(() => {
+    if (!runnable) return;
+    function onKey(e: KeyboardEvent) {
+      const h = handlers.current;
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        h.pick("champion");
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        h.pick("challenger");
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        h.undo();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [runnable]);
 
-  if (!chall) return null;
-
+  // --- Derived display strings ---
+  const streak = streakOf(battle, champ);
   const shown = battle.history.length - roundBase + 1;
+  const roundLine = over
+    ? `RUN COMPLETE · ${battle.defeatedIds.length} ELIMINATED`
+    : `MATCH ${pad(Math.min(shown, roundMatches))} / ${pad(roundMatches)} · PICK ONE TO KEEP`;
+  const queryLine = [
+    "FILM",
+    query,
+    ...applied.map((a) => a.label),
+  ]
+    .join(" · ")
+    .toUpperCase();
 
   return (
-    <div className="mt-2">
-      <div className="flex items-baseline justify-end">
-        <span className="font-mono text-sm tabular-nums text-gray-500">
-          {pad(shown)} / {pad(roundMatches)}
+    <main
+      className="box-border flex min-h-0 flex-1 flex-col"
+      style={{
+        padding: "clamp(12px,2vw,24px) clamp(12px,3vw,44px) clamp(14px,2vw,26px)",
+        animation: "bcin .25s ease-out",
+      }}
+    >
+      {/* Header */}
+      <div className="mx-auto flex w-full max-w-[1500px] flex-wrap items-center justify-between gap-[10px]">
+        <span
+          className="bc-pixel text-[#f2f4f6]"
+          style={{ font: "700 clamp(11px,1.3vw,16px) var(--font-silkscreen)", letterSpacing: ".8px" }}
+        >
+          BATTLECADIA
         </span>
-      </div>
-
-      {/* Champion is ALWAYS on the left, even after it changes hands. Cards that
-          swap sides make people lose track of which one they were reading. */}
-      <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-stretch gap-4">
-        <Card contender={champ} side="champion" onPick={() => pick(champ.id)} />
-        <div className="flex items-center font-mono text-lg font-bold text-gray-400">
-          VS
+        <div className="flex items-center gap-[7px]">
+          <HeaderBtn onClick={undo}>{past.length ? "UNDO" : "← INTENT"}</HeaderBtn>
+          <button
+            type="button"
+            onClick={() => setRefineOpen((o) => !o)}
+            className="bc-mono cursor-pointer border"
+            style={{
+              padding: "8px 11px",
+              font: "500 clamp(9px,.95vw,12px) var(--font-dm-mono)",
+              letterSpacing: "1.2px",
+              borderColor: "rgba(42,212,224,.5)",
+              background: refineOpen ? "rgba(42,212,224,.22)" : "rgba(42,212,224,.06)",
+              color: refineOpen ? "#7ee9f1" : "#2ad4e0",
+            }}
+          >
+            REFINE
+          </button>
+          <HeaderBtn onClick={() => router.push("/")}>RESTART ↻</HeaderBtn>
         </div>
-        <Card
-          contender={chall}
-          side="challenger"
-          onPick={() => pick(chall.id)}
-        />
       </div>
 
-      <p className="mt-4 text-right font-mono text-xs uppercase tracking-widest text-gray-500">
-        {battle.defeatedIds.length} defeated
-      </p>
+      {/* Query + round line */}
+      <div
+        className="bc-mono mx-auto flex w-full max-w-[1500px] flex-wrap justify-between gap-2 text-[#5a626b]"
+        style={{ margin: "clamp(8px,1vw,14px) auto 0", font: "400 clamp(9px,.95vw,12px) var(--font-dm-mono)", letterSpacing: "1.2px" }}
+      >
+        <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{queryLine}</span>
+        <span className="whitespace-nowrap text-[#7f8b98]">{roundLine}</span>
+      </div>
+
+      {/* Refine panel */}
+      {refineOpen && (
+        <div className="mx-auto w-full max-w-[1500px]" style={{ marginTop: "clamp(8px,1vw,14px)" }}>
+          <RefinePanel
+            query={query}
+            refinements={refinements}
+            facets={facets}
+            applied={applied}
+          />
+        </div>
+      )}
+
+      {!runnable ? (
+        <div className="mx-auto mt-12 max-w-[600px] text-center">
+          <h2
+            className="bc-pixel text-[#f2f4f6]"
+            style={{ fontSize: "clamp(13px,1.6vw,20px)", letterSpacing: ".5px" }}
+          >
+            ONLY {pool.length} {pool.length === 1 ? "FILM" : "FILMS"} MATCH
+          </h2>
+          <p className="bc-mono mt-3 text-sm text-[#8d949c]">
+            Open REFINE and remove a filter to widen the pool.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Well + battle / champion */}
+          <div
+            className="mx-auto flex w-full max-w-[1500px]"
+            style={{ flex: 1, minHeight: "min(420px,50vh)", margin: "clamp(10px,1.4vw,18px) auto 0", gap: "clamp(8px,1.2vw,16px)" }}
+          >
+            <OutWell battle={battle} colorFor={colorFor} />
+            {over ? (
+              <ChampionView
+                champ={champ}
+                defeated={battle.defeatedIds.length}
+                brandColor={colorFor(champ.id)}
+                canLoadMore={canLoadMore}
+                loadingMore={loadingMore}
+                loadError={loadError}
+                onMore={loadMore}
+                onReplay={() => router.push("/")}
+              />
+            ) : (
+              chall && (
+                <BattleGrid
+                  champ={champ}
+                  chall={chall}
+                  streak={streak}
+                  shatter={shatter}
+                  onPick={pick}
+                />
+              )
+            )}
+          </div>
+
+          {/* Crown the current leader (battle only) */}
+          {!over && (
+            <div
+              onClick={crown}
+              className="bc-mono mx-auto w-full max-w-[1500px] cursor-pointer border border-[rgba(106,168,79,.5)] bg-[rgba(106,168,79,.14)] text-center text-[#8fd06e] transition-colors hover:bg-[rgba(106,168,79,.24)]"
+              style={{ margin: "clamp(10px,1.4vw,18px) auto 0", padding: "clamp(11px,1.3vw,17px) 12px", font: "500 clamp(10px,1.05vw,14px) var(--font-dm-mono)", letterSpacing: "1.6px" }}
+            >
+              I&apos;M DONE — CROWN CURRENT LEADER
+            </div>
+          )}
+        </>
+      )}
+    </main>
+  );
+}
+
+/** Trailing win streak of the current champion (consecutive latest wins). */
+function streakOf(battle: Battle, champ: Contender | undefined): number {
+  if (!champ) return 0;
+  let s = 0;
+  for (let i = battle.history.length - 1; i >= 0; i--) {
+    if (battle.history[i].winnerId === champ.id) s++;
+    else break;
+  }
+  return s;
+}
+
+function HeaderBtn({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="bc-mono cursor-pointer border border-white/[.16] bg-white/[.05] text-[#cfd6de] transition-colors hover:bg-white/[.12]"
+      style={{ padding: "8px 11px", font: "500 clamp(9px,.95vw,12px) var(--font-dm-mono)", letterSpacing: "1.2px" }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// --- OUT well ---------------------------------------------------------------
+
+function OutWell({
+  battle,
+  colorFor,
+}: {
+  battle: Battle;
+  colorFor: (id: number) => string;
+}) {
+  const recent = battle.defeatedIds.slice(-9); // newest nine
+  const byId = new Map(battle.contenders.map((c) => [c.id, c]));
+
+  return (
+    <div className="flex flex-none flex-col" style={{ width: "clamp(38px,5vw,104px)" }}>
+      <div className="bc-pixel pb-[6px] text-center text-[#7f8b98]" style={{ fontSize: "clamp(8px,.85vw,11px)" }}>
+        OUT
+      </div>
+      <div className="flex flex-1 flex-col-reverse gap-[3px] border border-white/[.14] bg-white/[.03] p-[3px] box-border">
+        {Array.from({ length: 9 }).map((_, i) => {
+          const id = recent[i];
+          if (id === undefined) {
+            return (
+              <div
+                key={i}
+                className="flex flex-1 items-center justify-center border box-border"
+                style={{ background: "rgba(255,255,255,.03)", borderColor: "rgba(255,255,255,.09)", color: "transparent" }}
+              >
+                ·
+              </div>
+            );
+          }
+          const film = byId.get(id);
+          return (
+            <div
+              key={i}
+              className="bc-pixel flex flex-1 items-center justify-center border box-border"
+              style={{
+                background: colorFor(id),
+                borderColor: "rgba(0,0,0,.45)",
+                color: "rgba(0,0,0,.6)",
+                font: "400 clamp(7px,.9vw,12px) var(--font-silkscreen)",
+                animation: i === recent.length - 1 ? "bcdrop .3s ease-out" : "none",
+              }}
+            >
+              {(film?.title ?? "").slice(0, 2).toUpperCase()}
+            </div>
+          );
+        })}
+      </div>
+      <div className="bc-pixel pt-[6px] text-center text-[#7f8b98]" style={{ fontSize: "clamp(8px,.85vw,11px)" }}>
+        {battle.defeatedIds.length}
+      </div>
     </div>
   );
 }
 
-function ChampionScreen({
+// --- Battle grid ------------------------------------------------------------
+
+function BattleGrid({
+  champ,
+  chall,
+  streak,
+  shatter,
+  onPick,
+}: {
+  champ: Contender;
+  chall: Contender;
+  streak: number;
+  shatter: { side: Side; color: string } | null;
+  onPick: (side: Side) => void;
+}) {
+  return (
+    <div
+      className="relative grid min-h-0 min-w-0 flex-1"
+      style={{
+        gridTemplateColumns: "repeat(auto-fit,minmax(min(330px,100%),1fr))",
+        gridAutoRows: "minmax(0,1fr)",
+        gap: "clamp(10px,1.5vw,20px)",
+      }}
+    >
+      <BattleCard
+        contender={champ}
+        badge={`CHAMPION · ${streak > 0 ? `${streak} WINS` : "NEW"}`}
+        badgeBg="#6aa84f"
+        badgeFg="#0e2409"
+        shatter={shatter?.side === "champion" ? shatter.color : null}
+        onPick={() => onPick("champion")}
+      />
+      <BattleCard
+        contender={chall}
+        badge="CHALLENGER"
+        badgeBg="#b3423f"
+        badgeFg="#ffffff"
+        shatter={shatter?.side === "challenger" ? shatter.color : null}
+        onPick={() => onPick("challenger")}
+      />
+      {/* VS badge */}
+      <div
+        className="bc-pixel pointer-events-none absolute left-1/2 top-1/2 z-[3] flex -translate-x-1/2 -translate-y-1/2 items-center justify-center bg-[#f2f4f6] text-[#08090c]"
+        style={{ width: "clamp(34px,4vw,52px)", height: "clamp(34px,4vw,52px)", boxShadow: "0 0 0 4px #08090c", font: "700 clamp(10px,1.1vw,15px) var(--font-silkscreen)" }}
+      >
+        VS
+      </div>
+    </div>
+  );
+}
+
+function BattleCard({
+  contender,
+  badge,
+  badgeBg,
+  badgeFg,
+  shatter,
+  onPick,
+}: {
+  contender: Contender;
+  badge: string;
+  badgeBg: string;
+  badgeFg: string;
+  shatter: string | null;
+  onPick: () => void;
+}) {
+  return (
+    <div
+      onClick={onPick}
+      className="bc-panel bc-lift relative flex min-h-0 cursor-pointer flex-col overflow-hidden"
+    >
+      <div
+        className="bc-inset relative flex min-h-0 flex-1 items-center justify-center"
+        style={{ borderBottom: "4px solid #14161a" }}
+      >
+        {contender.posterUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={contender.posterUrl} alt={contender.title} className="h-full w-full object-cover" />
+        ) : (
+          <span className="bc-pixel text-[#5a626b]" style={{ fontSize: "clamp(8px,.9vw,11px)" }}>
+            NO IMAGE
+          </span>
+        )}
+        <div className="bc-pixel absolute left-0 top-0" style={{ padding: "5px 9px", background: badgeBg, color: badgeFg, fontSize: "clamp(8px,.9vw,11px)" }}>
+          {badge}
+        </div>
+        <div className="bc-mono absolute right-0 top-0 bg-[rgba(8,9,12,.8)] text-[#f2f4f6]" style={{ padding: "5px 9px", font: "500 clamp(12px,1.4vw,18px) var(--font-dm-mono)" }}>
+          ★ {contender.rating.toFixed(1)}
+        </div>
+      </div>
+      <div className="flex flex-none flex-col gap-[5px]" style={{ padding: "clamp(9px,1.1vw,15px) clamp(11px,1.3vw,18px)" }}>
+        <div className="flex flex-wrap items-baseline justify-between gap-[10px]">
+          <span className="bc-mono text-[#f2f4f6]" style={{ font: "500 clamp(17px,2vw,28px) var(--font-dm-mono)" }}>
+            {contender.title}
+          </span>
+          <span className="bc-pixel text-[#8d949c]" style={{ fontSize: "clamp(9px,.95vw,12px)" }}>
+            {contender.year ?? "—"}
+          </span>
+        </div>
+        <div className="bc-mono text-[#8d949c]" style={{ font: "400 clamp(10px,1.05vw,14px) var(--font-dm-mono)" }}>
+          {contender.voteCount.toLocaleString()} votes
+        </div>
+        {contender.overview && (
+          <div
+            className="bc-mono text-[#2ad4e0]"
+            style={{ font: "400 clamp(10px,1.05vw,14px)/1.45 var(--font-dm-mono)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
+          >
+            {contender.overview}
+          </div>
+        )}
+      </div>
+      {shatter && <Shatter color={shatter} />}
+    </div>
+  );
+}
+
+/** Nine shards flung off the losing card. */
+function Shatter({ color }: { color: string }) {
+  const cells = [
+    { l: "0", t: "0", a: "bcs1" },
+    { l: "33.3%", t: "0", a: "bcs2" },
+    { l: "66.6%", t: "0", a: "bcs3" },
+    { l: "0", t: "33.3%", a: "bcs4" },
+    { l: "33.3%", t: "33.3%", a: "bcs5" },
+    { l: "66.6%", t: "33.3%", a: "bcs6" },
+    { l: "0", t: "66.6%", a: "bcs7" },
+    { l: "33.3%", t: "66.6%", a: "bcs8" },
+    { l: "66.6%", t: "66.6%", a: "bcs9" },
+  ];
+  return (
+    <div className="pointer-events-none absolute inset-0" style={{ color }}>
+      {cells.map((c) => (
+        <div
+          key={c.a}
+          className="absolute"
+          style={{ left: c.l, top: c.t, width: "33.4%", height: "33.4%", background: "currentColor", animation: `${c.a} .4s ease-out forwards` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// --- Champion ---------------------------------------------------------------
+
+function ChampionView({
   champ,
   defeated,
+  brandColor,
   canLoadMore,
   loadingMore,
   loadError,
   onMore,
+  onReplay,
 }: {
   champ: Contender;
   defeated: number;
+  brandColor: string;
   canLoadMore: boolean;
   loadingMore: boolean;
   loadError: boolean;
   onMore: () => void;
+  onReplay: () => void;
 }) {
-  return (
-    <div className="mx-auto mt-2 max-w-xl text-center">
-      <p className="font-mono text-xs uppercase tracking-widest text-red-600">
-        Champion
-      </p>
-
-      <div className="mt-4 rounded-lg border-2 border-red-500 p-6 text-left">
-        <div className="flex gap-5">
-          <Poster contender={champ} className="h-56 w-40 flex-shrink-0" />
-          <div className="min-w-0">
-            <p className="text-lg font-semibold leading-snug">{champ.title}</p>
-            <Meta contender={champ} />
-            <p className="mt-3 text-sm leading-relaxed text-gray-700">
-              {champ.overview || "No overview available."}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <p className="mt-4 text-sm text-gray-600">
-        Defeated {defeated} {defeated === 1 ? "contender" : "contenders"}
-      </p>
-
-      <div className="mt-6 flex justify-center gap-3">
-        {canLoadMore ? (
-          <button
-            type="button"
-            onClick={onMore}
-            disabled={loadingMore}
-            className="rounded bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50"
-          >
-            {loadingMore ? "Finding…" : "More contenders"}
-          </button>
-        ) : (
-          <span className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-500">
-            No more contenders
-          </span>
-        )}
-        <WhereToWatch champ={champ} />
-      </div>
-
-      {loadError && (
-        <p className="mt-3 text-sm text-red-600">
-          Couldn&rsquo;t load more. Try again.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function WhereToWatch({ champ }: { champ: Contender }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const [watchLoading, setWatchLoading] = useState(false);
+  const [watchError, setWatchError] = useState(false);
   const [checked, setChecked] = useState(false);
   const [providers, setProviders] = useState<WatchProviders | null>(null);
 
-  async function check() {
-    setLoading(true);
-    setError(false);
+  async function whereToWatch() {
+    if (checked) return;
+    setWatchLoading(true);
+    setWatchError(false);
     try {
       setProviders(await fetchWatchProviders(champ.id));
       setChecked(true);
     } catch {
-      setError(true);
+      setWatchError(true);
     } finally {
-      setLoading(false);
+      setWatchLoading(false);
     }
   }
 
   return (
-    <>
-      {!checked ? (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" style={{ gap: "clamp(8px,1.1vw,14px)", animation: "bccrown .3s ease-out" }}>
+      {/* Banner */}
+      <div
+        className="bc-pixel flex-none text-center text-[#0e2409]"
+        style={{
+          padding: "clamp(9px,1.1vw,15px) 0",
+          background: "#6aa84f",
+          borderTop: "4px solid rgba(255,255,255,.34)",
+          borderLeft: "4px solid rgba(255,255,255,.2)",
+          borderRight: "4px solid rgba(0,0,0,.3)",
+          borderBottom: "4px solid rgba(0,0,0,.44)",
+          font: "400 clamp(12px,1.5vw,20px) var(--font-silkscreen)",
+          letterSpacing: ".5px",
+        }}
+      >
+        CHAMPION
+      </div>
+
+      {/* Champion card */}
+      <div
+        className="bc-panel grid min-h-0 flex-1 items-stretch"
+        style={{ padding: "clamp(12px,1.6vw,24px)", gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))", gridAutoRows: "minmax(0,1fr)", gap: "clamp(12px,2vw,28px)" }}
+      >
+        <div className="bc-inset flex min-h-0 items-center justify-center" style={{ border: "4px solid #14161a" }}>
+          {champ.posterUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={champ.posterUrl} alt={champ.title} className="h-full w-full object-cover" />
+          ) : (
+            <span className="bc-pixel text-[#5a626b]" style={{ fontSize: "clamp(8px,.9vw,11px)" }}>
+              NO IMAGE
+            </span>
+          )}
+        </div>
+        <div className="flex min-h-0 flex-col justify-center" style={{ gap: "clamp(6px,.9vw,12px)" }}>
+          <div className="bc-pixel" style={{ color: brandColor, fontSize: "clamp(9px,1vw,13px)" }}>
+            {champ.year ?? "—"}
+          </div>
+          <div className="bc-mono text-[#f2f4f6]" style={{ font: "500 clamp(21px,3vw,44px)/1.05 var(--font-dm-mono)" }}>
+            {champ.title}
+          </div>
+          <div className="flex flex-wrap items-baseline gap-3">
+            <span className="bc-mono text-[#f2f4f6]" style={{ font: "500 clamp(19px,2.2vw,32px) var(--font-dm-mono)" }}>
+              ★ {champ.rating.toFixed(1)}
+            </span>
+            <span className="bc-mono text-[#8d949c]" style={{ font: "400 clamp(10px,1.05vw,14px) var(--font-dm-mono)" }}>
+              {champ.voteCount.toLocaleString()} votes
+            </span>
+          </div>
+          {champ.overview && (
+            <p className="bc-mono text-[#8d949c]" style={{ font: "400 clamp(10px,1.05vw,14px)/1.5 var(--font-dm-mono)", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+              {champ.overview}
+            </p>
+          )}
+          <div className="bc-mono text-[#6aa84f]" style={{ font: "400 clamp(10px,1.05vw,14px) var(--font-dm-mono)", letterSpacing: "1.2px" }}>
+            DEFEATED {defeated} {defeated === 1 ? "CONTENDER" : "CONTENDERS"}
+          </div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex flex-none flex-wrap items-stretch gap-[9px]">
+        {!checked && (
+          <button
+            type="button"
+            onClick={whereToWatch}
+            disabled={watchLoading}
+            className="bc-cta bc-pixel flex-[1_1_220px] text-center text-[#0e2409] disabled:opacity-60"
+            style={{ padding: "clamp(14px,1.6vw,22px) 12px", font: "400 clamp(13px,1.4vw,19px) var(--font-silkscreen)" }}
+          >
+            {watchLoading ? "CHECKING…" : "WHERE TO WATCH"}
+          </button>
+        )}
+        {canLoadMore && (
+          <button
+            type="button"
+            onClick={onMore}
+            disabled={loadingMore}
+            className="bc-mono flex items-center justify-center border border-white/[.18] bg-white/[.05] text-[#cfd6de] transition-colors hover:bg-white/[.12] disabled:opacity-50"
+            style={{ padding: "clamp(14px,1.6vw,22px) clamp(14px,2vw,28px)", font: "500 clamp(10px,1.05vw,14px) var(--font-dm-mono)", letterSpacing: "1.4px" }}
+          >
+            {loadingMore ? "FINDING…" : "MORE CONTENDERS"}
+          </button>
+        )}
         <button
           type="button"
-          onClick={check}
-          disabled={loading}
-          className="rounded bg-red-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+          onClick={onReplay}
+          className="bc-mono flex items-center justify-center border border-white/[.18] bg-white/[.05] text-[#cfd6de] transition-colors hover:bg-white/[.12]"
+          style={{ padding: "clamp(14px,1.6vw,22px) clamp(14px,2vw,28px)", font: "500 clamp(10px,1.05vw,14px) var(--font-dm-mono)", letterSpacing: "1.4px" }}
         >
-          {loading ? "Checking…" : "Where to watch"}
+          REPLAY
         </button>
-      ) : null}
+      </div>
 
-      {error && (
-        <p className="mt-3 w-full text-sm text-red-600">
-          Couldn&rsquo;t check providers. Try again.
-        </p>
+      {loadError && (
+        <p className="bc-mono flex-none text-sm text-[#b3423f]">Couldn&rsquo;t load more. Try again.</p>
+      )}
+      {watchError && (
+        <p className="bc-mono flex-none text-sm text-[#b3423f]">Couldn&rsquo;t check providers. Try again.</p>
       )}
 
       {checked && (
-        <div className="mt-4 w-full text-left">
+        <div
+          className="flex-none border border-[rgba(42,212,224,.32)] bg-[rgba(42,212,224,.08)]"
+          style={{ padding: "clamp(10px,1.2vw,16px)" }}
+        >
           {providers === null ? (
-            <p className="text-sm text-gray-600">
-              No US streaming, rental, or purchase options are listed for this
-              title.
+            <p className="bc-mono text-[#2ad4e0]" style={{ font: "400 clamp(9px,1vw,13px)/1.5 var(--font-dm-mono)", letterSpacing: "1px" }}>
+              NO US STREAMING, RENTAL, OR PURCHASE OPTIONS ARE LISTED FOR THIS TITLE.
             </p>
           ) : (
-            <div className="space-y-3">
-              <ProviderRow label="Stream" list={providers.streaming} link={providers.link} />
-              <ProviderRow label="Rent" list={providers.rent} link={providers.link} />
-              <ProviderRow label="Buy" list={providers.buy} link={providers.link} />
-              <a
-                href={providers.link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block text-xs underline"
-              >
+            <div className="flex flex-col gap-3">
+              <ProviderRow label="STREAM" list={providers.streaming} link={providers.link} />
+              <ProviderRow label="RENT" list={providers.rent} link={providers.link} />
+              <ProviderRow label="BUY" list={providers.buy} link={providers.link} />
+              <a href={providers.link} target="_blank" rel="noopener noreferrer" className="bc-mono text-xs text-[#2ad4e0] underline">
                 More options on TMDB →
               </a>
             </div>
           )}
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -378,10 +760,10 @@ function ProviderRow({
   if (list.length === 0) return null;
   return (
     <div>
-      <p className="font-mono text-xs uppercase tracking-widest text-gray-500">
+      <p className="bc-pixel text-[#7f8b98]" style={{ fontSize: "clamp(8px,.85vw,11px)", letterSpacing: "1px" }}>
         {label}
       </p>
-      <ul className="mt-1 flex flex-wrap gap-2">
+      <ul className="mt-2 flex flex-wrap gap-2">
         {list.map((p) => (
           <li key={p.providerId}>
             <a
@@ -389,82 +771,18 @@ function ProviderRow({
               target="_blank"
               rel="noopener noreferrer"
               title={p.providerName}
-              className="flex items-center gap-2 rounded border border-gray-200 p-1.5"
+              className="flex items-center gap-2 border border-white/[.16] bg-white/[.04] p-[6px]"
             >
               {p.logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={p.logoUrl}
-                  alt={p.providerName}
-                  className="h-7 w-7 rounded"
-                />
+                <img src={p.logoUrl} alt={p.providerName} className="h-7 w-7" />
               ) : null}
-              <span className="pr-1 text-xs">{p.providerName}</span>
+              <span className="bc-mono pr-1 text-xs text-[#cfd6de]">{p.providerName}</span>
             </a>
           </li>
         ))}
       </ul>
     </div>
-  );
-}
-
-function Card({
-  contender,
-  side,
-  onPick,
-}: {
-  contender: Contender;
-  side: "champion" | "challenger";
-  onPick: () => void;
-}) {
-  const accent =
-    side === "champion"
-      ? "border-red-500 hover:bg-red-50"
-      : "border-blue-500 hover:bg-blue-50";
-  const label = side === "champion" ? "text-red-600" : "text-blue-600";
-  return (
-    <button
-      type="button"
-      onClick={onPick}
-      className={`flex flex-col rounded-lg border-2 p-4 text-left ${accent}`}
-    >
-      <span className={`font-mono text-xs uppercase tracking-widest ${label}`}>
-        {side}
-      </span>
-      <Poster contender={contender} className="mt-3 aspect-[2/3] w-full" />
-      <span className="mt-3 font-medium leading-snug">{contender.title}</span>
-      <Meta contender={contender} />
-      <span className="mt-2 line-clamp-2 text-xs leading-relaxed text-gray-600">
-        {contender.overview}
-      </span>
-    </button>
-  );
-}
-
-function Meta({ contender }: { contender: Contender }) {
-  return (
-    <span className="mt-1 flex items-center gap-2 text-sm text-gray-500">
-      <span>{contender.year ?? "—"}</span>
-      <span aria-hidden>·</span>
-      <span className="text-amber-600">★ {contender.rating.toFixed(1)}</span>
-    </span>
-  );
-}
-
-function Poster({
-  contender,
-  className,
-}: {
-  contender: Contender;
-  className: string;
-}) {
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={contender.posterUrl ?? ""}
-      alt={contender.title}
-      className={`rounded bg-gray-100 object-cover ${className}`}
-    />
   );
 }
 

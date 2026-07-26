@@ -10,7 +10,7 @@ import type {
 import { resolveSearch, buildEnrichedPool, getGenres } from "@/lib/tmdb";
 import { computeFacets, computeApplied } from "@/lib/facets";
 import { shuffle } from "@/lib/battle";
-import { parseRefinements } from "@/lib/refine";
+import { parseRefinements, refineKey } from "@/lib/refine";
 import { BattleScreen } from "./battle";
 
 // BATTLE PAGE — /battle?q=...&genre=...&rating=...&keyword=...
@@ -91,9 +91,11 @@ export default async function BattlePage({
 
   // Top 10 by relevance FIRST, then shuffle those 10 for draw order. The rest
   // stay in relevance order as the buffer. The empty-pool case (fewer than 4)
-  // is handled inside BattleScreen so the Refine chips stay visible.
+  // is handled inside BattleScreen so the Refine chips stay visible. Keying on
+  // the refinement signature remounts a fresh battle whenever a filter changes.
   return (
     <BattleScreen
+      key={refineKey(refinements)}
       query={query}
       plan={loaded.plan}
       refinements={refinements}
@@ -116,10 +118,15 @@ function Notice({
 }) {
   return (
     <main className="mx-auto max-w-xl flex-1 p-8 text-center">
-      <h1 className="text-lg font-semibold">{title}</h1>
-      <p className="mt-2 text-gray-600">{children}</p>
-      <Link href="/" className="mt-4 inline-block underline">
-        New search
+      <h1 className="bc-mono text-lg uppercase tracking-wide text-[#f2f4f6]">
+        {title}
+      </h1>
+      <p className="bc-mono mt-3 text-sm text-[#8d949c]">{children}</p>
+      <Link
+        href="/"
+        className="bc-pixel mt-5 inline-block text-xs uppercase tracking-widest text-[#2ad4e0]"
+      >
+        ← New arena
       </Link>
     </main>
   );

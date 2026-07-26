@@ -1,33 +1,232 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   BattleCadia — arcade visual language (from the design prototype).
+   Near-black arena, printed-grid grain, chunky 3D-bevelled tiles, DM Mono +
+   Silkscreen. Champion = green, challenger = red, accent = cyan.
+   Colours, keyframes, and the reusable bevel classes live here; screens
+   compose them with Tailwind utilities.
+--------------------------------------------------------------------------- */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --bc-bg: #08090c; /* the arena */
+  --bc-ink: #f2f4f6; /* primary text */
+  --bc-muted: #8d949c; /* secondary text */
+  --bc-dim: #5a626b; /* hints, faint labels */
+  --bc-faint: #7f8b98; /* well headers */
+  --bc-cyan: #2ad4e0; /* accent — links, refine, info */
+  --bc-cyan-lt: #7ee9f1;
+  --bc-green: #6aa84f; /* champion / primary action */
+  --bc-green-lt: #8fd06e;
+  --bc-red: #b3423f; /* challenger */
+  --bc-panel: #1a1e23; /* raised card body */
+  --bc-panel-hi: #22272e; /* raised tile (arena centre) */
+  --bc-inset: #24292f; /* recessed image area */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  margin: 0;
+  background: var(--bc-bg);
+  color: var(--bc-ink);
+  color-scheme: dark;
+  font-family: var(--font-dm-mono), ui-monospace, monospace;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* BattleCadia brand tokens — champion-red vs challenger-blue duel. */
-:root {
-  --bc-bg: #f4f5f7;
-  --bc-ink: #15171c;
-  --bc-muted: #6c7280;
-  --bc-line: #e5e7eb;
-  --bc-red: #e23b2e; /* champion — the action accent */
-  --bc-blue: #2f63e6; /* challenger — VS / secondary */
+a {
+  color: var(--bc-cyan);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--bc-cyan-lt);
+}
+
+input::placeholder {
+  color: currentColor;
+  opacity: 0.35;
+}
+input:focus {
+  outline: none;
+}
+
+/* Printed-grid grain over the whole viewport, behind all content. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.045) 0 1px,
+      transparent 1px 26px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.045) 0 1px,
+      transparent 1px 26px
+    );
+}
+/* Every screen sits above the grain. */
+body > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* --- Font roles --------------------------------------------------------- */
+.bc-pixel {
+  font-family: var(--font-silkscreen), var(--font-dm-mono), monospace;
+}
+.bc-mono {
+  font-family: var(--font-dm-mono), ui-monospace, monospace;
+}
+
+/* --- 3D bevels ---------------------------------------------------------- */
+/* Raised card / panel: light top-left, dark bottom-right. */
+.bc-panel {
+  box-sizing: border-box;
+  background: var(--bc-panel);
+  border-top: 5px solid #3d444d;
+  border-left: 5px solid #33393f;
+  border-right: 5px solid #14161a;
+  border-bottom: 5px solid #101215;
+}
+/* Recessed inner surface (poster wells). */
+.bc-inset {
+  background: var(--bc-inset);
+}
+/* Green primary action button (chunky, physical). */
+.bc-cta {
+  box-sizing: border-box;
+  cursor: pointer;
+  background: var(--bc-green);
+  border-top: 5px solid rgba(255, 255, 255, 0.34);
+  border-left: 5px solid rgba(255, 255, 255, 0.2);
+  border-right: 5px solid rgba(0, 0, 0, 0.3);
+  border-bottom: 5px solid rgba(0, 0, 0, 0.44);
+  transition: filter 0.15s;
+}
+.bc-cta:hover {
+  filter: brightness(1.12);
+}
+/* Arena category tile — same bevel, thicker, colour set inline. */
+.bc-tile {
+  box-sizing: border-box;
+  border-top: 7px solid rgba(255, 255, 255, 0.3);
+  border-left: 7px solid rgba(255, 255, 255, 0.16);
+  border-right: 7px solid rgba(0, 0, 0, 0.28);
+  border-bottom: 7px solid rgba(0, 0, 0, 0.4);
+}
+/* Raised centre tile (arena hub). */
+.bc-hub {
+  box-sizing: border-box;
+  background: var(--bc-panel-hi);
+  border-top: 5px solid #3d444d;
+  border-left: 5px solid #33393f;
+  border-right: 5px solid #14161a;
+  border-bottom: 5px solid #101215;
+}
+.bc-lift {
+  transition: filter 0.15s;
+}
+.bc-lift:hover {
+  filter: brightness(1.14);
+}
+
+/* --- Keyframes (ported verbatim from the prototype) --------------------- */
+@keyframes bcspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes bcin {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes bcdrop {
+  from {
+    transform: translateY(-26px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes bccrown {
+  from {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+/* Shatter — nine shards fly off the losing card. */
+@keyframes bcs1 {
+  to {
+    transform: translate(-70px, -62px) rotate(-40deg);
+    opacity: 0;
+  }
+}
+@keyframes bcs2 {
+  to {
+    transform: translate(0, -92px) rotate(18deg);
+    opacity: 0;
+  }
+}
+@keyframes bcs3 {
+  to {
+    transform: translate(70px, -62px) rotate(40deg);
+    opacity: 0;
+  }
+}
+@keyframes bcs4 {
+  to {
+    transform: translate(-98px, 4px) rotate(-24deg);
+    opacity: 0;
+  }
+}
+@keyframes bcs5 {
+  to {
+    transform: translate(0, -26px) scale(0.6);
+    opacity: 0;
+  }
+}
+@keyframes bcs6 {
+  to {
+    transform: translate(98px, 4px) rotate(24deg);
+    opacity: 0;
+  }
+}
+@keyframes bcs7 {
+  to {
+    transform: translate(-70px, 64px) rotate(-46deg);
+    opacity: 0;
+  }
+}
+@keyframes bcs8 {
+  to {
+    transform: translate(0, 84px) rotate(-12deg);
+    opacity: 0;
+  }
+}
+@keyframes bcs9 {
+  to {
+    transform: translate(70px, 64px) rotate(46deg);
+    opacity: 0;
+  }
 }

@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# design source drops (imported into code, don't need the raw export in git)
+*.zip
+
 # debug
 npm-debug.log*
 yarn-debug.log*
