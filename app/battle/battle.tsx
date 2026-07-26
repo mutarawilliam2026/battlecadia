@@ -238,9 +238,9 @@ export function BattleScreen({
 
   return (
     <main
-      className="box-border flex min-h-0 flex-1 flex-col"
+      className="relative box-border flex min-h-0 flex-1 flex-col"
       style={{
-        padding: "clamp(12px,2vw,24px) clamp(12px,3vw,44px) clamp(14px,2vw,26px)",
+        padding: "clamp(12px,2vw,24px) clamp(12px,3vw,44px) clamp(28px,3vw,40px)",
         animation: "bcin .25s ease-out",
       }}
     >
@@ -273,83 +273,91 @@ export function BattleScreen({
         </div>
       </div>
 
-      {/* Query + round line */}
+      {/* Query · mode · round line */}
       <div
-        className="bc-mono mx-auto flex w-full max-w-[1500px] flex-wrap justify-between gap-2 text-[#5a626b]"
+        className="bc-mono mx-auto flex w-full max-w-[1500px] flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[#5a626b]"
         style={{ margin: "clamp(8px,1vw,14px) auto 0", font: "400 clamp(9px,.95vw,12px) var(--font-dm-mono)", letterSpacing: "1.2px" }}
       >
-        <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{queryLine}</span>
-        <span className="whitespace-nowrap text-[#7f8b98]">{roundLine}</span>
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{queryLine}</span>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <ModeToggle />
+          <span className="whitespace-nowrap text-[#7f8b98]">{roundLine}</span>
+        </div>
       </div>
 
-      {/* Refine panel */}
-      {refineOpen && (
-        <div className="mx-auto w-full max-w-[1500px]" style={{ marginTop: "clamp(8px,1vw,14px)" }}>
-          <RefinePanel
-            query={query}
-            refinements={refinements}
-            facets={facets}
-            applied={applied}
-          />
-        </div>
-      )}
+      {/* Content region — position:relative so REFINE can overlay it rather than
+          pushing the battle down when it opens. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {refineOpen && (
+          <div className="absolute left-0 right-0 top-0 z-20" style={{ marginTop: "clamp(8px,1vw,14px)" }}>
+            <div className="mx-auto w-full max-w-[1500px]">
+              <RefinePanel
+                query={query}
+                refinements={refinements}
+                facets={facets}
+                applied={applied}
+              />
+            </div>
+          </div>
+        )}
 
-      {!runnable ? (
-        <div className="mx-auto mt-12 max-w-[600px] text-center">
-          <h2
-            className="bc-pixel text-[#f2f4f6]"
-            style={{ fontSize: "clamp(13px,1.6vw,20px)", letterSpacing: ".5px" }}
-          >
-            ONLY {pool.length} {pool.length === 1 ? "FILM" : "FILMS"} MATCH
-          </h2>
-          <p className="bc-mono mt-3 text-sm text-[#8d949c]">
-            Open REFINE and remove a filter to widen the pool.
-          </p>
-        </div>
-      ) : (
-        <>
-          {/* Well + battle / champion */}
+        {!runnable ? (
+          <div className="mx-auto mt-12 max-w-[600px] text-center">
+            <h2
+              className="bc-pixel text-[#f2f4f6]"
+              style={{ fontSize: "clamp(13px,1.6vw,20px)", letterSpacing: ".5px" }}
+            >
+              ONLY {pool.length} {pool.length === 1 ? "FILM" : "FILMS"} MATCH
+            </h2>
+            <p className="bc-mono mt-3 text-sm text-[#8d949c]">
+              Open REFINE and remove a filter to widen the pool.
+            </p>
+          </div>
+        ) : (
+          // The OUT well spans this whole row; the cards + I'M DONE bar stack in
+          // the right column, so the crown bar starts at the well's right edge
+          // and bottoms out exactly where the well does.
           <div
-            className="mx-auto flex w-full max-w-[1500px]"
-            style={{ flex: 1, minHeight: "min(420px,50vh)", margin: "clamp(10px,1.4vw,18px) auto 0", gap: "clamp(8px,1.2vw,16px)" }}
+            className="mx-auto flex w-full max-w-[1500px] flex-1"
+            style={{ minHeight: "min(420px,50vh)", margin: "clamp(10px,1.4vw,18px) auto 0", gap: "clamp(8px,1.2vw,16px)" }}
           >
             <OutWell battle={battle} colorFor={colorFor} />
-            {over ? (
-              <ChampionView
-                champ={champ}
-                defeated={battle.defeatedIds.length}
-                brandColor={colorFor(champ.id)}
-                canLoadMore={canLoadMore}
-                loadingMore={loadingMore}
-                loadError={loadError}
-                onMore={loadMore}
-                onReplay={() => router.push("/")}
-              />
-            ) : (
-              chall && (
-                <BattleGrid
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col" style={{ gap: "clamp(10px,1.4vw,18px)" }}>
+              {over ? (
+                <ChampionView
                   champ={champ}
-                  chall={chall}
-                  streak={streak}
-                  shatter={shatter}
-                  onPick={pick}
+                  defeated={battle.defeatedIds.length}
+                  brandColor={colorFor(champ.id)}
+                  canLoadMore={canLoadMore}
+                  loadingMore={loadingMore}
+                  loadError={loadError}
+                  onMore={loadMore}
+                  onReplay={() => router.push("/")}
                 />
-              )
-            )}
-          </div>
-
-          {/* Crown the current leader (battle only) */}
-          {!over && (
-            <div
-              onClick={crown}
-              className="bc-mono mx-auto w-full max-w-[1500px] cursor-pointer border border-[rgba(106,168,79,.5)] bg-[rgba(106,168,79,.14)] text-center text-[#8fd06e] transition-colors hover:bg-[rgba(106,168,79,.24)]"
-              style={{ margin: "clamp(10px,1.4vw,18px) auto 0", padding: "clamp(11px,1.3vw,17px) 12px", font: "500 clamp(10px,1.05vw,14px) var(--font-dm-mono)", letterSpacing: "1.6px" }}
-            >
-              I&apos;M DONE — CROWN CURRENT LEADER
+              ) : (
+                chall && (
+                  <>
+                    <BattleGrid
+                      champ={champ}
+                      chall={chall}
+                      streak={streak}
+                      shatter={shatter}
+                      onPick={pick}
+                    />
+                    <div
+                      onClick={crown}
+                      className="bc-mono flex-none cursor-pointer border border-[rgba(106,168,79,.5)] bg-[rgba(106,168,79,.14)] text-center text-[#8fd06e] transition-colors hover:bg-[rgba(106,168,79,.24)]"
+                      style={{ padding: "clamp(11px,1.3vw,17px) 12px", font: "500 clamp(10px,1.05vw,14px) var(--font-dm-mono)", letterSpacing: "1.6px" }}
+                    >
+                      I&apos;M DONE — CROWN CURRENT LEADER
+                    </div>
+                  </>
+                )
+              )}
             </div>
-          )}
-        </>
-      )}
+          </div>
+        )}
+      </div>
     </main>
   );
 }
@@ -381,6 +389,50 @@ function HeaderBtn({
     >
       {children}
     </button>
+  );
+}
+
+/** Format selector shown next to the round counter. Winner-stays is the live
+ *  format; knockout rounds are designed but not built yet, so it reads SOON. */
+function ModeToggle() {
+  return (
+    <div className="flex items-center gap-[7px]">
+      <span className="bc-pixel text-[#5a626b]" style={{ fontSize: "clamp(7px,.75vw,9px)", letterSpacing: ".5px" }}>
+        MODE
+      </span>
+      <div className="flex gap-[3px]">
+        <span
+          className="bc-mono"
+          style={{
+            padding: "5px 9px",
+            font: "500 clamp(8px,.9vw,11px) var(--font-dm-mono)",
+            letterSpacing: ".6px",
+            border: "1px solid rgba(42,212,224,.5)",
+            background: "rgba(42,212,224,.16)",
+            color: "#7ee9f1",
+          }}
+        >
+          WINNER STAYS
+        </span>
+        <span
+          className="bc-mono inline-flex cursor-not-allowed items-center gap-[5px]"
+          title="Knockout rounds — coming soon"
+          style={{
+            padding: "5px 9px",
+            font: "500 clamp(8px,.9vw,11px) var(--font-dm-mono)",
+            letterSpacing: ".6px",
+            border: "1px solid rgba(255,255,255,.12)",
+            background: "rgba(255,255,255,.03)",
+            color: "#5a626b",
+          }}
+        >
+          KNOCKOUT
+          <span className="bc-pixel" style={{ fontSize: "7px", letterSpacing: ".5px", background: "rgba(0,0,0,.4)", padding: "1px 3px", color: "#8d949c" }}>
+            SOON
+          </span>
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -478,7 +530,7 @@ function BattleGrid({
     >
       <BattleCard
         contender={champ}
-        badge={`CHAMPION · ${streak > 0 ? `${streak} WINS` : "NEW"}`}
+        badge={`CHAMPION · ${streak > 0 ? `${streak} WIN${streak === 1 ? "" : "S"}` : "NEW"}`}
         badgeBg="#6aa84f"
         badgeFg="#0e2409"
         shatter={shatter?.side === "champion" ? shatter.color : null}
@@ -529,7 +581,7 @@ function BattleCard({
       >
         {contender.posterUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={contender.posterUrl} alt={contender.title} className="h-full w-full object-cover" />
+          <img src={contender.posterUrl} alt={contender.title} className="h-full w-full object-contain" />
         ) : (
           <span className="bc-pixel text-[#5a626b]" style={{ fontSize: "clamp(8px,.9vw,11px)" }}>
             NO IMAGE
