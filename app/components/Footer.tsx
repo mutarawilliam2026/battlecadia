@@ -1,18 +1,20 @@
-// Attribution — REQUIRED by TMDB's terms of use. Their logo plus the exact
-// disclaimer, on every page (rendered from the root layout). Do not remove.
+// Attribution — REQUIRED by TMDB's terms of use. Their logo, on every page
+// (rendered from the root layout). A small mark pinned to the bottom-left so it
+// never eats layout space. The "not endorsed or certified by TMDB" disclaimer
+// still has to appear somewhere — it's slated for the FAQ / disclosure page.
+// Do not remove the logo.
 
 export function Footer() {
   return (
-    <footer className="mt-auto flex flex-col items-center gap-2 border-t border-white/10 p-6 text-center">
+    <a
+      href="https://www.themoviedb.org/"
+      target="_blank"
+      rel="noreferrer"
+      aria-label="Powered by The Movie Database (TMDB)"
+      className="fixed bottom-3 left-3 z-10 opacity-50 transition-opacity hover:opacity-90"
+    >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src="/tmdb.svg"
-        alt="The Movie Database (TMDB)"
-        className="h-4 w-auto opacity-80"
-      />
-      <p className="bc-mono max-w-md text-[11px] leading-relaxed tracking-wide text-[#5a626b]">
-        This product uses the TMDB API but is not endorsed or certified by TMDB.
-      </p>
-    </footer>
+      <img src="/tmdb.svg" alt="The Movie Database (TMDB)" className="h-[11px] w-auto" />
+    </a>
   );
 }
