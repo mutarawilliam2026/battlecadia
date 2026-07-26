@@ -1,45 +1,80 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import type { Contender, SearchPlan } from "@/lib/types";
-import { resolveSearch, fetchContenders } from "@/lib/tmdb";
-import { shuffle, MIN_CONTENDERS } from "@/lib/battle";
-import { BattleArena } from "./battle";
+import type {
+  AppliedChip,
+  Contender,
+  EnrichedFilm,
+  Facet,
+  SearchPlan,
+} from "@/lib/types";
+import { resolveSearch, buildEnrichedPool, getGenres } from "@/lib/tmdb";
+import { computeFacets, computeApplied } from "@/lib/facets";
+import { shuffle } from "@/lib/battle";
+import { parseRefinements } from "@/lib/refine";
+import { BattleScreen } from "./battle";
 
-// BATTLE PAGE — /battle?q=...
-// Server half: resolve the sentence (Gemini → TMDB), fetch page 1, take the top
-// 10 by relevance and shuffle THOSE for draw order (server-side, so the SSR HTML
-// and the hydrated client agree). The bracket itself is a client component.
+// BATTLE PAGE — /battle?q=...&genre=...&rating=...&keyword=...
+// Server half: resolve the sentence (Gemini → TMDB, memoized so refinements
+// never re-run the model), apply the URL's refinements, build + enrich a ~40
+// film pool, and compute the facets that genuinely split it. The battle uses
+// the top 10 (shuffled server-side for hydration parity); the rest profiles.
 
 // Never prerender — this hits a metered API and depends on the query.
 export const dynamic = "force-dynamic";
 
 type Loaded = {
-  contenders: Contender[];
   plan: SearchPlan;
+  pool: Contender[];
+  facets: Facet[];
+  applied: AppliedChip[];
   page: number;
   totalPages: number;
 };
 
+function first(v: string | string[] | undefined): string {
+  return (Array.isArray(v) ? v[0] : v) ?? "";
+}
+
+/** Strip enrichment back to a Contender for the battle's lean client payload. */
+function plain(f: EnrichedFilm): Contender {
+  return {
+    id: f.id,
+    title: f.title,
+    year: f.year,
+    posterUrl: f.posterUrl,
+    overview: f.overview,
+    rating: f.rating,
+    voteCount: f.voteCount,
+    genreIds: f.genreIds,
+    language: f.language,
+  };
+}
+
 export default async function BattlePage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { q } = await searchParams;
-  const query = q?.trim();
+  const sp = await searchParams;
+  const query = first(sp.q).trim();
   if (!query) redirect("/");
+
+  const refinements = parseRefinements(sp);
 
   // Fetch inside try/catch, but build JSX afterwards — a render error must not
   // be swallowed here (it belongs to an error boundary, not this try).
   let loaded: Loaded | null = null;
   try {
     const { plan } = await resolveSearch(query);
-    const page1 = await fetchContenders(plan, 1);
+    const genres = await getGenres();
+    const enriched = await buildEnrichedPool(plan, refinements);
     loaded = {
-      contenders: page1.contenders,
       plan,
-      page: page1.page,
-      totalPages: page1.totalPages,
+      pool: enriched.films.map(plain),
+      facets: computeFacets(enriched.films, genres),
+      applied: computeApplied(refinements, enriched.films, genres),
+      page: enriched.page,
+      totalPages: enriched.totalPages,
     };
   } catch {
     loaded = null;
@@ -54,25 +89,18 @@ export default async function BattlePage({
     );
   }
 
-  const pool = loaded.contenders;
-
-  // Not enough distinct films with posters to make a bracket.
-  if (pool.length < MIN_CONTENDERS) {
-    return (
-      <Notice title="Not enough contenders">
-        Only {pool.length} usable {pool.length === 1 ? "film" : "films"} came
-        back for &ldquo;{query}&rdquo;. Try different words.
-      </Notice>
-    );
-  }
-
   // Top 10 by relevance FIRST, then shuffle those 10 for draw order. The rest
-  // stay in relevance order as the buffer for later rounds.
+  // stay in relevance order as the buffer. The empty-pool case (fewer than 4)
+  // is handled inside BattleScreen so the Refine chips stay visible.
   return (
-    <BattleArena
+    <BattleScreen
+      query={query}
       plan={loaded.plan}
-      initialContenders={shuffle(pool.slice(0, 10))}
-      initialBuffer={pool.slice(10)}
+      refinements={refinements}
+      facets={loaded.facets}
+      applied={loaded.applied}
+      initialContenders={shuffle(loaded.pool.slice(0, 10))}
+      initialBuffer={loaded.pool.slice(10)}
       initialPage={loaded.page}
       totalPages={loaded.totalPages}
     />

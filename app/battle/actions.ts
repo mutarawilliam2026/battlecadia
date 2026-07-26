@@ -1,6 +1,6 @@
 "use server";
 
-import type { ContenderPage, SearchPlan, WatchProviders } from "@/lib/types";
+import type { ContenderPage, Refinements, SearchPlan, WatchProviders } from "@/lib/types";
 import { fetchContenders, getWatchProviders } from "@/lib/tmdb";
 
 // METERED — these hit TMDB. Only ever invoked from explicit clicks ("More
@@ -9,9 +9,10 @@ import { fetchContenders, getWatchProviders } from "@/lib/tmdb";
 /** Next page of contenders for an already-resolved plan. No new Gemini call. */
 export async function loadMorePage(
   plan: SearchPlan,
+  refinements: Refinements,
   page: number,
 ): Promise<ContenderPage> {
-  return fetchContenders(plan, page);
+  return fetchContenders(plan, refinements, page);
 }
 
 /** US watch providers for the crowned champion. null when none in the US. */

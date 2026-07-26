@@ -1,20 +1,26 @@
 "use client";
 
 // BATTLE — the interactive half of /battle?q=...
-// Winner-stays bracket over the contenders it's handed. Champion stays LEFT
-// (red), challenger enters RIGHT (blue). Client state only, no persistence.
-// It owns the round buffer and calls server actions to page TMDB on demand.
+// BattleScreen wraps the Refine panel and the winner-stays loop. Any refinement
+// change navigates to a new /battle URL; the server re-renders with a fresh
+// pool, and keying the loop on the refinement signature restarts it cleanly
+// (champion cleared, counter back to 01/09, defeated to zero). Client state
+// only, no persistence.
 
 import { useState } from "react";
 import Link from "next/link";
 import type {
+  AppliedChip,
   Contender,
+  Facet,
+  Refinements,
   SearchPlan,
   WatchProvider,
   WatchProviders,
 } from "@/lib/types";
 import {
   type Battle,
+  MIN_CONTENDERS,
   addContenders,
   challenger,
   champion,
@@ -23,19 +29,89 @@ import {
   shuffle,
   startBattle,
 } from "@/lib/battle";
+import { refineKey } from "@/lib/refine";
+import { RefineBar } from "./refine";
 import { loadMorePage, fetchWatchProviders } from "./actions";
 
 const ROUND_SIZE = 10;
 
-export function BattleArena({
+export function BattleScreen({
+  query,
   plan,
+  refinements,
+  facets,
+  applied,
+  initialContenders,
+  initialBuffer,
+  initialPage,
+  totalPages,
+}: {
+  query: string;
+  plan: SearchPlan;
+  refinements: Refinements;
+  /** Refinable axes for the current pool, precomputed server-side. */
+  facets: Facet[];
+  /** Active refinements resolved to chip labels, server-side. */
+  applied: AppliedChip[];
+  /** Already shuffled for draw order (server-side, to match hydration). */
+  initialContenders: Contender[];
+  initialBuffer: Contender[];
+  initialPage: number;
+  totalPages: number;
+}) {
+  const pool = [...initialContenders, ...initialBuffer];
+
+  return (
+    <main className="mx-auto w-full max-w-3xl flex-1 p-6">
+      <div className="flex items-baseline justify-between">
+        <Link href="/" className="text-sm underline">
+          ← New search
+        </Link>
+      </div>
+
+      <div className="mt-4">
+        <RefineBar
+          query={query}
+          refinements={refinements}
+          facets={facets}
+          applied={applied}
+        />
+      </div>
+
+      {pool.length < MIN_CONTENDERS ? (
+        <div className="mt-8 text-center">
+          <h1 className="text-lg font-semibold">
+            Only {pool.length} {pool.length === 1 ? "film" : "films"} match
+          </h1>
+          <p className="mt-2 text-sm text-gray-600">
+            Remove a filter above to widen the pool.
+          </p>
+        </div>
+      ) : (
+        <BattleArena
+          key={refineKey(refinements)}
+          plan={plan}
+          refinements={refinements}
+          initialContenders={initialContenders}
+          initialBuffer={initialBuffer}
+          initialPage={initialPage}
+          totalPages={totalPages}
+        />
+      )}
+    </main>
+  );
+}
+
+function BattleArena({
+  plan,
+  refinements,
   initialContenders,
   initialBuffer,
   initialPage,
   totalPages,
 }: {
   plan: SearchPlan;
-  /** Already shuffled for draw order (server-side, to match hydration). */
+  refinements: Refinements;
   initialContenders: Contender[];
   initialBuffer: Contender[];
   initialPage: number;
@@ -62,15 +138,11 @@ export function BattleArena({
   const chall = challenger(battle);
   const over = isOver(battle);
 
-  // More rounds are possible while the buffer holds contenders or TMDB has pages
-  // left to fetch. When both run dry, the battle is truly over.
   const canLoadMore = buffer.length > 0 || page < pages;
 
   function pick(winnerId: number) {
     const next = resolveMatch(battle, winnerId);
     if (next === battle) return; // not a valid pick for this matchup
-
-    // Nowhere to persist preference data yet — log the shape at battle end.
     if (isOver(next)) console.log("[battle] history", next.history);
     setBattle(next);
   }
@@ -83,11 +155,9 @@ export function BattleArena({
       let pg = page;
       let tp = pages;
 
-      // Top up the buffer to a full round if TMDB still has pages. One page adds
-      // up to 20, so a single fetch clears the threshold; loop only guards the
-      // rare short page.
+      // Top up the buffer to a full round if TMDB still has pages.
       while (buf.length < ROUND_SIZE && pg < tp) {
-        const res = await loadMorePage(plan, pg + 1);
+        const res = await loadMorePage(plan, refinements, pg + 1);
         pg = res.page;
         tp = res.totalPages;
         const seen = new Set([
@@ -99,8 +169,6 @@ export function BattleArena({
         if (fresh.length === 0) break; // a page with nothing new — stop paging
       }
 
-      // Next round's challengers: the next 10 in relevance order, minus the
-      // champion and anyone already defeated, then shuffled for draw order.
       const excluded = new Set([champ.id, ...battle.defeatedIds]);
       const take = buf.slice(0, ROUND_SIZE);
       const challengers = shuffle(take.filter((c) => !excluded.has(c.id)));
@@ -109,7 +177,7 @@ export function BattleArena({
       setPage(pg);
       setPages(tp);
 
-      if (challengers.length === 0) return; // nothing left; canLoadMore is now false
+      if (challengers.length === 0) return; // nothing left; canLoadMore now false
 
       setRoundBase(battle.history.length);
       setRoundMatches(challengers.length);
@@ -139,11 +207,8 @@ export function BattleArena({
   const shown = battle.history.length - roundBase + 1;
 
   return (
-    <main className="mx-auto w-full max-w-3xl flex-1 p-6">
-      <div className="flex items-baseline justify-between">
-        <Link href="/" className="text-sm underline">
-          ← New search
-        </Link>
+    <div className="mt-2">
+      <div className="flex items-baseline justify-end">
         <span className="font-mono text-sm tabular-nums text-gray-500">
           {pad(shown)} / {pad(roundMatches)}
         </span>
@@ -151,7 +216,7 @@ export function BattleArena({
 
       {/* Champion is ALWAYS on the left, even after it changes hands. Cards that
           swap sides make people lose track of which one they were reading. */}
-      <div className="mt-6 grid grid-cols-[1fr_auto_1fr] items-stretch gap-4">
+      <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-stretch gap-4">
         <Card contender={champ} side="champion" onPick={() => pick(champ.id)} />
         <div className="flex items-center font-mono text-lg font-bold text-gray-400">
           VS
@@ -166,7 +231,7 @@ export function BattleArena({
       <p className="mt-4 text-right font-mono text-xs uppercase tracking-widest text-gray-500">
         {battle.defeatedIds.length} defeated
       </p>
-    </main>
+    </div>
   );
 }
 
@@ -186,7 +251,7 @@ function ChampionScreen({
   onMore: () => void;
 }) {
   return (
-    <main className="mx-auto w-full max-w-xl flex-1 p-6 text-center">
+    <div className="mx-auto mt-2 max-w-xl text-center">
       <p className="font-mono text-xs uppercase tracking-widest text-red-600">
         Champion
       </p>
@@ -231,11 +296,7 @@ function ChampionScreen({
           Couldn&rsquo;t load more. Try again.
         </p>
       )}
-
-      <Link href="/" className="mt-6 inline-block text-sm underline">
-        New search
-      </Link>
-    </main>
+    </div>
   );
 }
 
