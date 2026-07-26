@@ -118,6 +118,24 @@ export async function getGenres(): Promise<{ id: number; name: string }[]> {
   return genreCache;
 }
 
+// TMDB's own display_priority per provider (lower = more prominent). Used to
+// rank the Streaming facet's chips. Static; cached for the process.
+let providerPriorityCache: Map<number, number> | null = null;
+
+export async function getProviderPriority(): Promise<Map<number, number>> {
+  if (providerPriorityCache) return providerPriorityCache;
+  const data = await tmdbGet<{
+    results?: { provider_id: number; display_priority?: number }[];
+  }>("/watch/providers/movie", { language: "en-US", watch_region: "US" });
+  providerPriorityCache = new Map(
+    (data.results ?? []).map((p) => [
+      p.provider_id,
+      p.display_priority ?? Number.MAX_SAFE_INTEGER,
+    ]),
+  );
+  return providerPriorityCache;
+}
+
 export async function discoverMovies(
   q: MovieQuery,
   r: Refinements,
