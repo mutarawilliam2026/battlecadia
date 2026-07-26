@@ -15,7 +15,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const MIN_COVER = 4; // a value must cover ≥ this many films to be offerable
-const MAX_SHARE = 0.8; // drop an axis (or streaming value) covering > this fraction
+const MAX_SHARE = 0.8; // drop an axis covering > this fraction of the pool
 const MIN_CONTINUOUS = 8; // need this many data points to threshold a continuous axis
 const MIN_RATING_SPREAD = 0.5; // below this the ratings are all "the same"
 const MIN_RUNTIME_SPREAD = 20; // minutes
@@ -32,14 +32,6 @@ const STINGER_KEYWORDS = new Set([
   "post-credits scene",
   "no credits scene",
 ]);
-
-// An ad-supported tier's name is its parent service plus an ad marker
-// ("Netflix Standard with Ads" → "Netflix"). We collapse tiers by stripping
-// that marker — matching the shared name base, not a hardcoded service list.
-const AD_TIER_SUFFIX = /\s+(standard\s+)?with\s+ads$/i;
-function providerBase(name: string): string {
-  return name.replace(AD_TIER_SUFFIX, "").trim();
-}
 
 const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 function languageName(code: string): string {
@@ -152,70 +144,20 @@ function continuousFacet(
 }
 
 /**
- * The Streaming axis gets its own builder: it merges ad-supported tiers into
- * their parent service (union of films, so a title on both tiers counts once),
- * drops any provider that carries > 80% of the streamable pool (a near-ubiquitous
- * carrier like a live-TV bundle is a constant, not a filter), and ranks the
- * survivors by TMDB's own display_priority rather than raw count.
- */
-function providerFacet(
-  pool: EnrichedFilm[],
-  streamable: number,
-  priority: Map<number, number>,
-): Scored | null {
-  const groups = new Map<string, { films: Set<number>; ids: Map<number, number> }>();
-  for (const f of pool) {
-    const bases = new Set<string>();
-    for (const p of f.providers) {
-      const base = providerBase(p.name);
-      bases.add(base);
-      let g = groups.get(base);
-      if (!g) {
-        g = { films: new Set(), ids: new Map() };
-        groups.set(base, g);
-      }
-      g.ids.set(p.id, priority.get(p.id) ?? Number.MAX_SAFE_INTEGER);
-    }
-    for (const base of bases) groups.get(base)!.films.add(f.id);
-  }
-
-  const values = [...groups.entries()]
-    .map(([base, g]) => {
-      // Representative id: lowest display_priority in the group (the parent
-      // service outranks its ad tier / channels).
-      const [id, prio] = [...g.ids.entries()].sort((a, b) => a[1] - b[1])[0];
-      return { label: base, count: g.films.size, value: String(id), prio };
-    })
-    .filter((v) => v.count >= MIN_COVER && v.count / Math.max(streamable, 1) <= MAX_SHARE);
-
-  if (values.length < 2) return null;
-
-  values.sort((a, b) => a.prio - b.prio || b.count - a.count);
-  return {
-    facet: {
-      key: "providerId",
-      label: "Streaming",
-      values: values.map(({ label, count, value }) => ({ label, count, value })),
-    },
-    score: splitScore(values.map((v) => v.count)),
-  };
-}
-
-/**
  * Compute the refinable axes for a pool: only those that genuinely split it,
- * ranked by split richness, top four. `genres` maps ids to names; `priority`
- * maps provider ids to TMDB display_priority for ranking streaming chips.
+ * ranked by split richness, top four. `genres` maps ids to names. Streaming is
+ * deliberately NOT a facet — a film's US providers change constantly and
+ * carriers cluster the pool without narrowing intent; providers belong on the
+ * champion's "where to watch" screen, where showing every one is the point.
  */
 export function computeFacets(
   pool: EnrichedFilm[],
   genres: { id: number; name: string }[],
-  priority: Map<number, number>,
   limit = 4,
 ): Facet[] {
   const n = pool.length;
   if (n === 0) return [];
   const genreName = new Map(genres.map((g) => [g.id, g.name]));
-  const streamable = pool.filter((f) => f.providers.length > 0).length;
 
   const candidates: (Scored | null)[] = [
     discreteFacet(
@@ -257,7 +199,6 @@ export function computeFacets(
       ),
       n,
     ),
-    providerFacet(pool, streamable, priority),
     continuousFacet(
       "minRating",
       "Rating",
@@ -310,10 +251,6 @@ export function computeApplied(
   if (r.keywordId != null) {
     const name = pool.flatMap((f) => f.keywords).find((k) => k.id === r.keywordId)?.name;
     chips.push({ key: "keywordId", label: name ?? "Keyword" });
-  }
-  if (r.providerId != null) {
-    const name = pool.flatMap((f) => f.providers).find((p) => p.id === r.providerId)?.name;
-    chips.push({ key: "providerId", label: name ?? "Streaming" });
   }
   return chips;
 }

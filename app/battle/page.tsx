@@ -7,12 +7,7 @@ import type {
   Facet,
   SearchPlan,
 } from "@/lib/types";
-import {
-  resolveSearch,
-  buildEnrichedPool,
-  getGenres,
-  getProviderPriority,
-} from "@/lib/tmdb";
+import { resolveSearch, buildEnrichedPool, getGenres } from "@/lib/tmdb";
 import { computeFacets, computeApplied } from "@/lib/facets";
 import { shuffle } from "@/lib/battle";
 import { parseRefinements } from "@/lib/refine";
@@ -71,15 +66,12 @@ export default async function BattlePage({
   let loaded: Loaded | null = null;
   try {
     const { plan } = await resolveSearch(query);
-    const [genres, priority] = await Promise.all([
-      getGenres(),
-      getProviderPriority(),
-    ]);
+    const genres = await getGenres();
     const enriched = await buildEnrichedPool(plan, refinements);
     loaded = {
       plan,
       pool: enriched.films.map(plain),
-      facets: computeFacets(enriched.films, genres, priority),
+      facets: computeFacets(enriched.films, genres),
       applied: computeApplied(refinements, enriched.films, genres),
       page: enriched.page,
       totalPages: enriched.totalPages,

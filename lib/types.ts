@@ -26,8 +26,6 @@ export type Contender = {
 export type EnrichedFilm = Contender & {
   runtime: number | null;
   keywords: { id: number; name: string }[];
-  /** US flatrate (streaming) providers on this film. */
-  providers: { id: number; name: string }[];
 };
 
 /**
@@ -42,7 +40,6 @@ export type Refinements = {
   maxRuntime: number | null; // → with_runtime.lte (a derived threshold)
   language: string | null; // → with_original_language
   keywordId: number | null; // → with_keywords
-  providerId: number | null; // → with_watch_providers (watch_region US)
 };
 
 export type RefinementKey = keyof Refinements;

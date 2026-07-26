@@ -118,24 +118,6 @@ export async function getGenres(): Promise<{ id: number; name: string }[]> {
   return genreCache;
 }
 
-// TMDB's own display_priority per provider (lower = more prominent). Used to
-// rank the Streaming facet's chips. Static; cached for the process.
-let providerPriorityCache: Map<number, number> | null = null;
-
-export async function getProviderPriority(): Promise<Map<number, number>> {
-  if (providerPriorityCache) return providerPriorityCache;
-  const data = await tmdbGet<{
-    results?: { provider_id: number; display_priority?: number }[];
-  }>("/watch/providers/movie", { language: "en-US", watch_region: "US" });
-  providerPriorityCache = new Map(
-    (data.results ?? []).map((p) => [
-      p.provider_id,
-      p.display_priority ?? Number.MAX_SAFE_INTEGER,
-    ]),
-  );
-  return providerPriorityCache;
-}
-
 export async function discoverMovies(
   q: MovieQuery,
   r: Refinements,
@@ -169,10 +151,6 @@ export async function discoverMovies(
   if (r.maxRuntime != null) params["with_runtime.lte"] = String(r.maxRuntime);
   if (r.language != null) params.with_original_language = r.language;
   if (r.keywordId != null) params.with_keywords = String(r.keywordId);
-  if (r.providerId != null) {
-    params.with_watch_providers = String(r.providerId);
-    params.watch_region = "US";
-  }
 
   return mapPage(await tmdbGet<TmdbPage>("/discover/movie", params));
 }
@@ -238,8 +216,8 @@ export async function resolveSearch(
 // --- Pool + enrichment ------------------------------------------------------
 // The battle needs only the top 10, but the Refine panel profiles a larger
 // pool. We fetch a couple of pages, then enrich each film with the fields
-// search results don't carry (runtime, keywords, US streaming providers) via
-// one /movie/{id} call apiece, in parallel.
+// search results don't carry (runtime, keywords) via one /movie/{id} call
+// apiece, in parallel.
 
 const POOL_PAGES = 2; // ~40 films to profile against
 const MAX_REC_PAGES = 3;
@@ -260,8 +238,6 @@ function passesRefinements(f: EnrichedFilm, r: Refinements): boolean {
   if (r.language != null && f.language !== r.language) return false;
   if (r.keywordId != null && !f.keywords.some((k) => k.id === r.keywordId))
     return false;
-  if (r.providerId != null && !f.providers.some((p) => p.id === r.providerId))
-    return false;
   if (r.decade != null) {
     const y = f.year ? Number(f.year) : null;
     if (y === null || y < r.decade || y > r.decade + 9) return false;
@@ -272,16 +248,14 @@ function passesRefinements(f: EnrichedFilm, r: Refinements): boolean {
 type TmdbDetail = TmdbMovie & {
   runtime?: number | null;
   keywords?: { keywords?: { id: number; name: string }[] };
-  "watch/providers"?: { results?: Record<string, TmdbCountryProviders> };
 };
 
 async function enrichFilm(c: Contender): Promise<EnrichedFilm> {
   try {
     const d = await tmdbGet<TmdbDetail>(`/movie/${c.id}`, {
       language: "en-US",
-      append_to_response: "keywords,watch/providers",
+      append_to_response: "keywords",
     });
-    const us = d["watch/providers"]?.results?.US;
     return {
       ...c,
       runtime: d.runtime ?? null,
@@ -289,15 +263,11 @@ async function enrichFilm(c: Contender): Promise<EnrichedFilm> {
         id: k.id,
         name: k.name,
       })),
-      providers: (us?.flatrate ?? []).map((p) => ({
-        id: p.provider_id,
-        name: p.provider_name,
-      })),
     };
   } catch {
     // A failed enrichment shouldn't sink the pool — that film just can't
-    // contribute to the runtime/keyword/provider facets.
-    return { ...c, runtime: null, keywords: [], providers: [] };
+    // contribute to the runtime/keyword facets.
+    return { ...c, runtime: null, keywords: [] };
   }
 }
 

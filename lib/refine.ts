@@ -13,7 +13,6 @@ export const NO_REFINEMENTS: Refinements = {
   maxRuntime: null,
   language: null,
   keywordId: null,
-  providerId: null,
 };
 
 // Each refinement's URL parameter name. The one string ↔ number/string mapping.
@@ -24,7 +23,6 @@ const PARAM: Record<RefinementKey, string> = {
   maxRuntime: "runtime",
   language: "lang",
   keywordId: "keyword",
-  providerId: "provider",
 };
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -48,7 +46,6 @@ export function parseRefinements(sp: SearchParams): Refinements {
     maxRuntime: num(sp[PARAM.maxRuntime]),
     language: str(sp[PARAM.language]),
     keywordId: num(sp[PARAM.keywordId]),
-    providerId: num(sp[PARAM.providerId]),
   };
 }
 
