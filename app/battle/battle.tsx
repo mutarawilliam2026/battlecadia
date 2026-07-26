@@ -416,19 +416,31 @@ function OutWell({
             );
           }
           const film = byId.get(id);
+          const drop = i === recent.length - 1 ? "bcdrop .3s ease-out" : "none";
           return (
             <div
               key={i}
-              className="bc-pixel flex flex-1 items-center justify-center border box-border"
+              className="bc-pixel relative flex flex-1 items-center justify-center overflow-hidden border box-border"
+              title={film?.title}
               style={{
                 background: colorFor(id),
                 borderColor: "rgba(0,0,0,.45)",
                 color: "rgba(0,0,0,.6)",
                 font: "400 clamp(7px,.9vw,12px) var(--font-silkscreen)",
-                animation: i === recent.length - 1 ? "bcdrop .3s ease-out" : "none",
+                animation: drop,
               }}
             >
-              {(film?.title ?? "").slice(0, 2).toUpperCase()}
+              {film?.posterUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={film.posterUrl}
+                  alt={film.title}
+                  className="absolute inset-0 h-full w-full object-cover"
+                  style={{ filter: "grayscale(.3)" }}
+                />
+              ) : (
+                (film?.title ?? "").slice(0, 2).toUpperCase()
+              )}
             </div>
           );
         })}
