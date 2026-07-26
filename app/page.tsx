@@ -7,6 +7,7 @@
 // render as designed but sit locked ("SOON"). Submitting navigates to
 // /battle?q=… — the prompt lives in the URL, no POST, no stored id.
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -71,18 +72,14 @@ export default function Intent() {
     >
       {/* Header */}
       <div className="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4">
-        <span
-          className="bc-pixel text-[#f2f4f6]"
-          style={{ font: "700 clamp(12px,1.5vw,18px) var(--font-silkscreen)", letterSpacing: ".8px" }}
+        <Link
+          href="/"
+          className="bc-pixel transition-opacity hover:opacity-80"
+          style={{ color: "#f2f4f6", font: "700 clamp(12px,1.5vw,18px) var(--font-silkscreen)", letterSpacing: ".8px" }}
         >
           BATTLECADIA
-        </span>
-        <span
-          className="bc-mono text-[#2ad4e0]"
-          style={{ fontSize: "clamp(10px,1.1vw,13px)", letterSpacing: "1.4px" }}
-        >
-          HI 0000
-        </span>
+        </Link>
+        <AuthButtons />
       </div>
 
       {/* Centre stage: copy + form on the left, arena wheel on the right */}
@@ -238,6 +235,35 @@ export default function Intent() {
         </div>
       </div>
     </main>
+  );
+}
+
+/** Sign-in / sign-up — designed and in the layout, but disabled until the auth
+ *  slice ships. Everyone plays anonymously for now, so these read SOON. */
+function AuthButtons() {
+  const pill =
+    "bc-mono cursor-not-allowed border border-white/[.16] bg-white/[.05] text-[#8d949c]";
+  const pillStyle = {
+    padding: "7px 11px",
+    font: "500 clamp(9px,1vw,12px) var(--font-dm-mono)",
+    letterSpacing: "1px",
+    opacity: 0.55,
+  } as const;
+  return (
+    <div className="flex items-center gap-[7px]" title="Accounts — coming soon">
+      <button type="button" disabled className={pill} style={pillStyle}>
+        LOG IN
+      </button>
+      <button type="button" disabled className={pill} style={pillStyle}>
+        SIGN UP
+      </button>
+      <span
+        className="bc-pixel"
+        style={{ fontSize: "8px", letterSpacing: ".5px", background: "rgba(0,0,0,.4)", padding: "2px 4px", color: "#8d949c" }}
+      >
+        SOON
+      </span>
+    </div>
   );
 }
 

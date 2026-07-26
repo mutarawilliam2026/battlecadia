@@ -5,9 +5,12 @@
 // client-side undo stack, early "crown the current leader", the shatter
 // animation on each elimination, and the OUT well. It is keyed on the
 // refinement signature by the server page, so changing a filter remounts a
-// fresh battle. Client state only, no persistence.
+// fresh battle. Client state, plus a fire-once save to Supabase when the battle
+// ends or is abandoned (see ./use-save-battle) — the bracket logic itself stays
+// pure and client-only.
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type {
   AppliedChip,
@@ -31,6 +34,7 @@ import {
 } from "@/lib/battle";
 import { RefinePanel } from "./refine";
 import { loadMorePage, fetchWatchProviders } from "./actions";
+import { useSaveBattle } from "./use-save-battle";
 
 const ROUND_SIZE = 10;
 
@@ -46,6 +50,7 @@ type Snap = {
   pages: number;
   roundBase: number;
   roundMatches: number;
+  rounds: number;
   crowned: boolean;
 };
 
@@ -89,6 +94,8 @@ export function BattleScreen({
   const [roundMatches, setRoundMatches] = useState(
     Math.max(initialContenders.length - 1, 0),
   );
+  // Rounds played: starts at 1, +1 each time "More contenders" adds a batch.
+  const [rounds, setRounds] = useState(1);
 
   const [past, setPast] = useState<Snap[]>([]);
   const [shatter, setShatter] = useState<{ side: Side; color: string } | null>(null);
@@ -102,13 +109,28 @@ export function BattleScreen({
   const over = isOver(battle) || crowned;
   const canLoadMore = buffer.length > 0 || page < pages;
 
+  // Persist this battle when it ends or is abandoned (≥1 matchup). Anonymous for
+  // now — auth is off, so no user_id; the per-browser session id is what lets us
+  // claim these rows once login ships. Reads the loop's own history; the bracket
+  // logic in lib/battle.ts is untouched.
+  useSaveBattle(over, {
+    arena: "movies",
+    prompt: query,
+    resolvedQuery: plan,
+    appliedRefinements: applied,
+    championTmdbId: champ?.id ?? null,
+    initialChampionId: battle.contenders[0]?.id ?? null,
+    rounds,
+    history: battle.history,
+  });
+
   const colorFor = (id: number) => {
     const i = battle.contenders.findIndex((c) => c.id === id);
     return PALETTE[(i < 0 ? 0 : i) % PALETTE.length];
   };
 
   function snapshot(): Snap {
-    return { battle, buffer, page, pages, roundBase, roundMatches, crowned };
+    return { battle, buffer, page, pages, roundBase, roundMatches, rounds, crowned };
   }
 
   function pick(side: Side) {
@@ -142,6 +164,7 @@ export function BattleScreen({
     setPages(prev.pages);
     setRoundBase(prev.roundBase);
     setRoundMatches(prev.roundMatches);
+    setRounds(prev.rounds);
     setCrowned(prev.crowned);
   }
 
@@ -187,6 +210,7 @@ export function BattleScreen({
       setPast((p) => [...p, before]);
       setRoundBase(battle.history.length);
       setRoundMatches(challengers.length);
+      setRounds((r) => r + 1);
       setBattle(addContenders(battle, challengers));
       setCrowned(false);
     } catch {
@@ -246,12 +270,13 @@ export function BattleScreen({
     >
       {/* Header */}
       <div className="mx-auto flex w-full max-w-[1500px] flex-wrap items-center justify-between gap-[10px]">
-        <span
-          className="bc-pixel text-[#f2f4f6]"
-          style={{ font: "700 clamp(11px,1.3vw,16px) var(--font-silkscreen)", letterSpacing: ".8px" }}
+        <Link
+          href="/"
+          className="bc-pixel transition-opacity hover:opacity-80"
+          style={{ color: "#f2f4f6", font: "700 clamp(11px,1.3vw,16px) var(--font-silkscreen)", letterSpacing: ".8px" }}
         >
           BATTLECADIA
-        </span>
+        </Link>
         <div className="flex items-center gap-[7px]">
           <HeaderBtn onClick={undo}>{past.length ? "UNDO" : "← INTENT"}</HeaderBtn>
           <button
