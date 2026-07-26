@@ -10,6 +10,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Logo } from "./components/Logo";
 
 // The six arenas, positioned/rotated exactly as the design lays them around the
 // hub. `live` marks the one with a real backend; the rest are locked.
@@ -74,10 +75,15 @@ export default function Intent() {
       <div className="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4">
         <Link
           href="/"
-          className="bc-pixel transition-opacity hover:opacity-80"
-          style={{ color: "#f2f4f6", font: "700 clamp(12px,1.5vw,18px) var(--font-silkscreen)", letterSpacing: ".8px" }}
+          className="inline-flex items-center gap-[10px] transition-opacity hover:opacity-80"
         >
-          BATTLECADIA
+          <Logo />
+          <span
+            className="bc-pixel"
+            style={{ color: "#f2f4f6", font: "700 clamp(12px,1.5vw,18px) var(--font-silkscreen)", letterSpacing: ".8px" }}
+          >
+            BATTLECADIA
+          </span>
         </Link>
         <AuthButtons />
       </div>

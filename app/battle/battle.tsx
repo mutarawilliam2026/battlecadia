@@ -35,6 +35,7 @@ import {
 import { RefinePanel } from "./refine";
 import { loadMorePage, fetchWatchProviders } from "./actions";
 import { useSaveBattle } from "./use-save-battle";
+import { Logo } from "../components/Logo";
 
 const ROUND_SIZE = 10;
 
@@ -272,10 +273,15 @@ export function BattleScreen({
       <div className="mx-auto flex w-full max-w-[1500px] flex-wrap items-center justify-between gap-[10px]">
         <Link
           href="/"
-          className="bc-pixel transition-opacity hover:opacity-80"
-          style={{ color: "#f2f4f6", font: "700 clamp(11px,1.3vw,16px) var(--font-silkscreen)", letterSpacing: ".8px" }}
+          className="inline-flex items-center gap-[9px] transition-opacity hover:opacity-80"
         >
-          BATTLECADIA
+          <Logo />
+          <span
+            className="bc-pixel"
+            style={{ color: "#f2f4f6", font: "700 clamp(11px,1.3vw,16px) var(--font-silkscreen)", letterSpacing: ".8px" }}
+          >
+            BATTLECADIA
+          </span>
         </Link>
         <div className="flex items-center gap-[7px]">
           <HeaderBtn onClick={undo}>{past.length ? "UNDO" : "← INTENT"}</HeaderBtn>
