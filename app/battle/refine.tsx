@@ -28,10 +28,9 @@ export function RefinePanel({
   const active = facets.find((f) => f.key === axis) ?? null;
 
   return (
-    <div
-      className="box-border border border-[rgba(42,212,224,.28)] bg-[rgba(42,212,224,.06)]"
-      style={{ padding: "clamp(10px,1.2vw,16px)" }}
-    >
+    // No outer chrome — this renders inside the shared Overlay panel, which
+    // supplies the solid background, border, and padding.
+    <div className="box-border">
       {/* Active refinements — cyan, click to remove */}
       {applied.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-[7px]">

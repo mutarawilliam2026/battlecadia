@@ -5,7 +5,7 @@ import { saveBattle, type SaveBattleInput } from "./save-battle";
 
 // Persist a battle exactly once — when a champion is crowned, or when the user
 // leaves after at least one matchup. `over` drives the crowned save; an unmount
-// cleanup (RESTART / REPLAY / refine remount / ← INTENT) and a `pagehide`
+// cleanup (RESTART / REPLAY / refine remount / ← BACK) and a `pagehide`
 // listener (tab close / refresh) cover abandonment. A guard makes sure the same
 // battle never writes twice.
 

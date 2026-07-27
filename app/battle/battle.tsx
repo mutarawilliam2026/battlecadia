@@ -36,6 +36,7 @@ import { RefinePanel } from "./refine";
 import { loadMorePage, fetchWatchProviders } from "./actions";
 import { useSaveBattle } from "./use-save-battle";
 import { Logo } from "../components/Logo";
+import { Overlay } from "../components/Overlay";
 
 const ROUND_SIZE = 10;
 
@@ -284,7 +285,7 @@ export function BattleScreen({
           </span>
         </Link>
         <div className="flex items-center gap-[7px]">
-          <HeaderBtn onClick={undo}>{past.length ? "UNDO" : "← INTENT"}</HeaderBtn>
+          <HeaderBtn onClick={undo}>{past.length ? "UNDO" : "← BACK"}</HeaderBtn>
           <button
             type="button"
             onClick={() => setRefineOpen((o) => !o)}
@@ -316,20 +317,18 @@ export function BattleScreen({
         </div>
       </div>
 
-      {/* Content region — position:relative so REFINE can overlay it rather than
-          pushing the battle down when it opens. */}
+      {/* Content region. REFINE opens as a modal overlay (see components/Overlay)
+          on top of the battle — it never shifts or resizes the cards. */}
       <div className="relative flex min-h-0 flex-1 flex-col">
         {refineOpen && (
-          <div className="absolute left-0 right-0 top-0 z-20" style={{ marginTop: "clamp(8px,1vw,14px)" }}>
-            <div className="mx-auto w-full max-w-[1500px]">
-              <RefinePanel
-                query={query}
-                refinements={refinements}
-                facets={facets}
-                applied={applied}
-              />
-            </div>
-          </div>
+          <Overlay title="REFINE" onClose={() => setRefineOpen(false)} maxWidth={640}>
+            <RefinePanel
+              query={query}
+              refinements={refinements}
+              facets={facets}
+              applied={applied}
+            />
+          </Overlay>
         )}
 
         {!runnable ? (
@@ -701,15 +700,21 @@ function ChampionView({
   const [watchLoading, setWatchLoading] = useState(false);
   const [watchError, setWatchError] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [watchOpen, setWatchOpen] = useState(false);
   const [providers, setProviders] = useState<WatchProviders | null>(null);
 
   async function whereToWatch() {
-    if (checked) return;
+    // Already fetched once — just reopen the overlay, no refetch.
+    if (checked) {
+      setWatchOpen(true);
+      return;
+    }
     setWatchLoading(true);
     setWatchError(false);
     try {
       setProviders(await fetchWatchProviders(champ.id));
       setChecked(true);
+      setWatchOpen(true);
     } catch {
       setWatchError(true);
     } finally {
@@ -779,17 +784,15 @@ function ChampionView({
 
       {/* Actions */}
       <div className="flex flex-none flex-wrap items-stretch gap-[9px]">
-        {!checked && (
-          <button
-            type="button"
-            onClick={whereToWatch}
-            disabled={watchLoading}
-            className="bc-cta bc-pixel flex-[1_1_220px] text-center text-[#0e2409] disabled:opacity-60"
-            style={{ padding: "clamp(14px,1.6vw,22px) 12px", font: "400 clamp(13px,1.4vw,19px) var(--font-silkscreen)" }}
-          >
-            {watchLoading ? "CHECKING…" : "WHERE TO WATCH"}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={whereToWatch}
+          disabled={watchLoading}
+          className="bc-cta bc-pixel flex-[1_1_220px] text-center text-[#0e2409] disabled:opacity-60"
+          style={{ padding: "clamp(14px,1.6vw,22px) 12px", font: "400 clamp(13px,1.4vw,19px) var(--font-silkscreen)" }}
+        >
+          {watchLoading ? "CHECKING…" : "WHERE TO WATCH"}
+        </button>
         {canLoadMore && (
           <button
             type="button"
@@ -818,10 +821,13 @@ function ChampionView({
         <p className="bc-mono flex-none text-sm text-[#b3423f]">Couldn&rsquo;t check providers. Try again.</p>
       )}
 
-      {checked && (
-        <div
-          className="flex-none border border-[rgba(42,212,224,.32)] bg-[rgba(42,212,224,.08)]"
-          style={{ padding: "clamp(10px,1.2vw,16px)" }}
+      {/* Where-to-watch opens as a modal overlay ON TOP of the champion card —
+          closing it (backdrop, ✕, or Esc) leaves the champion screen intact. */}
+      {watchOpen && (
+        <Overlay
+          title={`WHERE TO WATCH · ${champ.title.toUpperCase()}`}
+          onClose={() => setWatchOpen(false)}
+          maxWidth={520}
         >
           {providers === null ? (
             <p className="bc-mono text-[#2ad4e0]" style={{ font: "400 clamp(9px,1vw,13px)/1.5 var(--font-dm-mono)", letterSpacing: "1px" }}>
@@ -837,7 +843,7 @@ function ChampionView({
               </a>
             </div>
           )}
-        </div>
+        </Overlay>
       )}
     </div>
   );

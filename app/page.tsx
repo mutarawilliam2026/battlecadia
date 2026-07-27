@@ -43,15 +43,19 @@ const SUGGESTIONS = [
 export default function Intent() {
   const router = useRouter();
   const [f, setF] = useState({ item: "", mood: "", era: "" });
+  // Gemini + TMDB take a couple of seconds; `busy` drives the button's spinner
+  // and blocks a second submit so one tap can't fire two searches.
+  const [busy, setBusy] = useState(false);
 
   const ready = f.item.trim().length > 0;
 
   function start() {
-    if (!ready) return;
+    if (!ready || busy) return;
     const q = [f.item, f.mood, f.era]
       .map((s) => s.trim())
       .filter(Boolean)
       .join(", ");
+    setBusy(true);
     router.push(`/battle?q=${encodeURIComponent(q)}`);
   }
 
@@ -128,24 +132,41 @@ export default function Intent() {
               <button
                 type="button"
                 onClick={start}
-                aria-label="Start battle"
+                disabled={busy}
+                aria-label={busy ? "Starting battle" : "Start battle"}
+                aria-busy={busy}
                 className="bc-cta flex flex-none items-center justify-center"
                 style={{
                   width: "clamp(54px,5vw,68px)",
                   height: "clamp(54px,5vw,68px)",
-                  opacity: ready ? 1 : 0.42,
+                  opacity: busy ? 0.85 : ready ? 1 : 0.42,
+                  cursor: busy ? "wait" : ready ? "pointer" : "not-allowed",
                 }}
               >
-                <span
-                  style={{
-                    width: 0,
-                    height: 0,
-                    borderLeft: "14px solid #0e2409",
-                    borderTop: "9px solid transparent",
-                    borderBottom: "9px solid transparent",
-                    marginLeft: 3,
-                  }}
-                />
+                {busy ? (
+                  <span
+                    aria-hidden
+                    style={{
+                      width: "clamp(18px,1.8vw,22px)",
+                      height: "clamp(18px,1.8vw,22px)",
+                      border: "3px solid rgba(14,36,9,.28)",
+                      borderTopColor: "#0e2409",
+                      borderRadius: "50%",
+                      animation: "bcspin .7s linear infinite",
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderLeft: "14px solid #0e2409",
+                      borderTop: "9px solid transparent",
+                      borderBottom: "9px solid transparent",
+                      marginLeft: 3,
+                    }}
+                  />
+                )}
               </button>
             </div>
 
@@ -168,7 +189,11 @@ export default function Intent() {
               className="bc-mono text-[#5a626b]"
               style={{ font: "400 clamp(9px,.95vw,12px) var(--font-dm-mono)", letterSpacing: "1.4px" }}
             >
-              {ready ? "READY — ONE CHAMPION, MANY MATCHES" : "TELL US WHAT TO WATCH TO START"}
+              {busy
+                ? "SEARCHING — BUILDING YOUR ARENA…"
+                : ready
+                  ? "READY — ONE CHAMPION, MANY MATCHES"
+                  : "TELL US WHAT TO WATCH TO START"}
             </div>
           </div>
 
