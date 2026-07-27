@@ -30,12 +30,22 @@ function browserSessionId(): string {
 /** Everything saveBattle needs except the identity fields, which we supply. */
 type SavePayload = Omit<SaveBattleInput, "sessionId" | "userId">;
 
-export function useSaveBattle(over: boolean, payload: SavePayload) {
+export function useSaveBattle(
+  over: boolean,
+  payload: SavePayload,
+  runId = 0,
+) {
   const savedRef = useRef(false);
   const payloadRef = useRef(payload);
   useEffect(() => {
     payloadRef.current = payload;
   });
+
+  // A REPLAY reruns the same roster in place (no remount), so bump `runId` to
+  // clear the fire-once guard — the rerun is a distinct battle worth persisting.
+  useEffect(() => {
+    savedRef.current = false;
+  }, [runId]);
 
   // Stable across renders (reads only refs), so it can safely be a dependency
   // and an event handler. Reads the latest payload at fire time, so unmount /

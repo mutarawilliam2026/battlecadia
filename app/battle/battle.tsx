@@ -100,6 +100,8 @@ export function BattleScreen({
   const [rounds, setRounds] = useState(1);
 
   const [past, setPast] = useState<Snap[]>([]);
+  // Bumped by REPLAY so the fire-once save hook treats the rerun as a new battle.
+  const [runId, setRunId] = useState(0);
   const [shatter, setShatter] = useState<{ side: Side; color: string } | null>(null);
   const [crowned, setCrowned] = useState(false);
   const [refineOpen, setRefineOpen] = useState(false);
@@ -115,16 +117,20 @@ export function BattleScreen({
   // now — auth is off, so no user_id; the per-browser session id is what lets us
   // claim these rows once login ships. Reads the loop's own history; the bracket
   // logic in lib/battle.ts is untouched.
-  useSaveBattle(over, {
-    arena: "movies",
-    prompt: query,
-    resolvedQuery: plan,
-    appliedRefinements: applied,
-    championTmdbId: champ?.id ?? null,
-    initialChampionId: battle.contenders[0]?.id ?? null,
-    rounds,
-    history: battle.history,
-  });
+  useSaveBattle(
+    over,
+    {
+      arena: "movies",
+      prompt: query,
+      resolvedQuery: plan,
+      appliedRefinements: applied,
+      championTmdbId: champ?.id ?? null,
+      initialChampionId: battle.contenders[0]?.id ?? null,
+      rounds,
+      history: battle.history,
+    },
+    runId,
+  );
 
   const colorFor = (id: number) => {
     const i = battle.contenders.findIndex((c) => c.id === id);
@@ -153,11 +159,7 @@ export function BattleScreen({
   }
 
   function undo() {
-    if (shatter) return;
-    if (!past.length) {
-      router.push("/");
-      return;
-    }
+    if (shatter || !past.length) return;
     const prev = past[past.length - 1];
     setPast(past.slice(0, -1));
     setBattle(prev.battle);
@@ -168,6 +170,23 @@ export function BattleScreen({
     setRoundMatches(prev.roundMatches);
     setRounds(prev.rounds);
     setCrowned(prev.crowned);
+  }
+
+  // REPLAY — rerun the battle that just ended with the exact same roster (every
+  // contender that ever entered, defeated ones included), reshuffled for a fresh
+  // draw order. No new search; the buffer/pages are left intact so "More
+  // contenders" still works. `runId` bumps so the save hook persists this as a
+  // new battle rather than skipping it under the fire-once guard.
+  function replay() {
+    const roster = battle.contenders;
+    setPast([]);
+    setShatter(null);
+    setCrowned(false);
+    setBattle(startBattle(shuffle(roster)));
+    setRoundBase(0);
+    setRoundMatches(Math.max(roster.length - 1, 0));
+    setRounds(1);
+    setRunId((n) => n + 1);
   }
 
   function crown() {
@@ -285,7 +304,8 @@ export function BattleScreen({
           </span>
         </Link>
         <div className="flex items-center gap-[7px]">
-          <HeaderBtn onClick={undo}>{past.length ? "UNDO" : "← BACK"}</HeaderBtn>
+          <HeaderBtn onClick={() => router.push("/")}>← BACK</HeaderBtn>
+          <HeaderBtn onClick={undo} disabled={!past.length}>UNDO</HeaderBtn>
           <button
             type="button"
             onClick={() => setRefineOpen((o) => !o)}
@@ -301,7 +321,6 @@ export function BattleScreen({
           >
             REFINE
           </button>
-          <HeaderBtn onClick={() => router.push("/")}>RESTART ↻</HeaderBtn>
         </div>
       </div>
 
@@ -362,7 +381,7 @@ export function BattleScreen({
                   loadingMore={loadingMore}
                   loadError={loadError}
                   onMore={loadMore}
-                  onReplay={() => router.push("/")}
+                  onReplay={replay}
                 />
               ) : (
                 chall && (
@@ -405,16 +424,19 @@ function streakOf(battle: Battle, champ: Contender | undefined): number {
 
 function HeaderBtn({
   onClick,
+  disabled,
   children,
 }: {
   onClick: () => void;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="bc-mono cursor-pointer border border-white/[.16] bg-white/[.05] text-[#cfd6de] transition-colors hover:bg-white/[.12]"
+      disabled={disabled}
+      className="bc-mono cursor-pointer border border-white/[.16] bg-white/[.05] text-[#cfd6de] transition-colors hover:bg-white/[.12] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white/[.05]"
       style={{ padding: "8px 11px", font: "500 clamp(9px,.95vw,12px) var(--font-dm-mono)", letterSpacing: "1.2px" }}
     >
       {children}
