@@ -27,7 +27,7 @@ type Arena = {
 const ARENAS: Arena[] = [
   { key: "shop", label: "SHOP", bg: "#9a6b3f", fg: "#ffffff", rot: -8, left: "37.33%", top: "0.67%" },
   { key: "food", label: "FOOD", bg: "#6aa84f", fg: "#0e2409", rot: 7, left: "69%", top: "19%" },
-  { key: "film", label: "FILM", bg: "#4a90c2", fg: "#08202e", rot: -6, left: "69%", top: "55.67%", live: true },
+  { key: "film", label: "MOVIES", bg: "#4a90c2", fg: "#08202e", rot: -6, left: "69%", top: "55.67%", live: true },
   { key: "books", label: "BOOKS", bg: "#8c8f94", fg: "#1b1d20", rot: 9, left: "37.33%", top: "74%" },
   { key: "travel", label: "TRAVEL", bg: "#d4a437", fg: "#2c2005", rot: 6, left: "5.67%", top: "55.67%" },
   { key: "music", label: "MUSIC", bg: "#b3423f", fg: "#2d0a09", rot: -9, left: "5.67%", top: "19%" },
@@ -42,7 +42,7 @@ const SUGGESTIONS = [
 
 export default function Intent() {
   const router = useRouter();
-  const [f, setF] = useState({ item: "", mood: "", era: "" });
+  const [f, setF] = useState({ item: "", vibe: "", era: "" });
   // Gemini + TMDB take a couple of seconds; `busy` drives the button's spinner
   // and blocks a second submit so one tap can't fire two searches.
   const [busy, setBusy] = useState(false);
@@ -51,7 +51,7 @@ export default function Intent() {
 
   function start() {
     if (!ready || busy) return;
-    const q = [f.item, f.mood, f.era]
+    const q = [f.item, f.vibe, f.era]
       .map((s) => s.trim())
       .filter(Boolean)
       .join(", ");
@@ -101,8 +101,9 @@ export default function Intent() {
               <h1
                 className="bc-mono m-0 uppercase text-[#f2f4f6]"
                 style={{
-                  font: "400 clamp(28px,4.4vw,58px)/1.04 var(--font-dm-mono)",
-                  letterSpacing: ".5px",
+                  font: "500 clamp(28px,4.4vw,58px)/1.02 var(--font-dm-mono)",
+                  letterSpacing: "-1px",
+                  wordSpacing: "-.16em",
                   textWrap: "balance",
                 }}
               >
@@ -126,7 +127,7 @@ export default function Intent() {
             >
               <div className="flex min-w-0 flex-1 flex-col" style={{ gap: "clamp(10px,1.2vw,15px)" }}>
                 <Blank prefix="I want" k="item" value={f.item} placeholder="a tense thriller" setF={setF} onEnter={onEnter} grow />
-                <Blank prefix="mood" k="mood" value={f.mood} placeholder="edge-of-seat" setF={setF} onEnter={onEnter} grow />
+                <Blank prefix="vibe" k="vibe" value={f.vibe} placeholder="edge-of-seat" setF={setF} onEnter={onEnter} grow />
                 <Blank prefix="era" k="era" value={f.era} placeholder="the 80s" setF={setF} onEnter={onEnter} grow />
               </div>
               <button
@@ -185,16 +186,16 @@ export default function Intent() {
               ))}
             </div>
 
-            <div
-              className="bc-mono text-[#5a626b]"
-              style={{ font: "400 clamp(9px,.95vw,12px) var(--font-dm-mono)", letterSpacing: "1.4px" }}
-            >
-              {busy
-                ? "SEARCHING — BUILDING YOUR ARENA…"
-                : ready
-                  ? "READY — ONE CHAMPION, MANY MATCHES"
-                  : "TELL US WHAT TO WATCH TO START"}
-            </div>
+            {(busy || ready) && (
+              <div
+                className="bc-mono text-[#5a626b]"
+                style={{ font: "400 clamp(9px,.95vw,12px) var(--font-dm-mono)", letterSpacing: "1.4px" }}
+              >
+                {busy
+                  ? "SEARCHING — BUILDING YOUR ARENA…"
+                  : "READY — ONE CHAMPION, MANY MATCHES"}
+              </div>
+            )}
           </div>
 
           {/* Right column: the arena wheel */}
@@ -205,16 +206,18 @@ export default function Intent() {
                 className="absolute rounded-full border-[3px] border-dotted border-white/10"
                 style={{ left: "11.33%", top: "11.33%", width: "77.33%", height: "77.33%", animation: "bcspin 60s linear infinite" }}
               />
-              {/* Hub — the selected arena */}
+              {/* Hub — the selected arena. Movies is the live one, marked with a
+                  film-reel glyph so it reads as more than just a word. */}
               <div
-                className="bc-hub absolute flex flex-col items-center justify-center gap-1 text-center"
-                style={{ left: "34%", top: "34%", width: "32%", height: "32%" }}
+                className="bc-hub absolute flex flex-col items-center justify-center text-center"
+                style={{ left: "34%", top: "34%", width: "32%", height: "32%", gap: "clamp(5px,.8vw,9px)" }}
               >
+                <FilmReel />
                 <div
                   className="bc-mono uppercase text-[#f2f4f6]"
-                  style={{ font: "400 clamp(12px,1.4vw,17px) var(--font-dm-mono)", letterSpacing: ".4px" }}
+                  style={{ font: "500 clamp(12px,1.4vw,17px) var(--font-dm-mono)", letterSpacing: "-.5px" }}
                 >
-                  Film
+                  Movies
                 </div>
                 <div className="bc-pixel text-[#6aa84f]" style={{ fontSize: "clamp(8px,.85vw,10px)" }}>
                   SELECTED
@@ -269,6 +272,33 @@ export default function Intent() {
   );
 }
 
+/** Film-reel glyph for the selected (Movies) arena hub — a ring with the six
+ *  perforations, drawn in the cyan accent. Purely decorative. */
+function FilmReel() {
+  const holes: [number, number][] = [
+    [16, 6.5],
+    [16, 25.5],
+    [7.77, 11.25],
+    [24.23, 11.25],
+    [7.77, 20.75],
+    [24.23, 20.75],
+  ];
+  return (
+    <svg
+      viewBox="0 0 32 32"
+      fill="none"
+      aria-hidden
+      style={{ width: "clamp(26px,3vw,38px)", height: "clamp(26px,3vw,38px)" }}
+    >
+      <circle cx="16" cy="16" r="13" stroke="#2ad4e0" strokeWidth="2.4" />
+      <circle cx="16" cy="16" r="3.1" fill="#2ad4e0" />
+      {holes.map(([cx, cy]) => (
+        <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="2.2" fill="#2ad4e0" />
+      ))}
+    </svg>
+  );
+}
+
 /** Sign-in / sign-up — designed and in the layout, but disabled until the auth
  *  slice ships. Everyone plays anonymously for now, so these read SOON. */
 function AuthButtons() {
@@ -309,10 +339,10 @@ function Blank({
   grow,
 }: {
   prefix: string;
-  k: "item" | "mood" | "era";
+  k: "item" | "vibe" | "era";
   value: string;
   placeholder: string;
-  setF: React.Dispatch<React.SetStateAction<{ item: string; mood: string; era: string }>>;
+  setF: React.Dispatch<React.SetStateAction<{ item: string; vibe: string; era: string }>>;
   onEnter: (e: React.KeyboardEvent) => void;
   grow?: boolean;
 }) {

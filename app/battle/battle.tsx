@@ -274,7 +274,7 @@ export function BattleScreen({
     ? `RUN COMPLETE · ${battle.defeatedIds.length} ELIMINATED`
     : `MATCH ${pad(Math.min(shown, roundMatches))} / ${pad(roundMatches)} · PICK ONE TO KEEP`;
   const queryLine = [
-    "FILM",
+    "MOVIES",
     query,
     ...applied.map((a) => a.label),
   ]
@@ -356,7 +356,7 @@ export function BattleScreen({
               className="bc-pixel text-[#f2f4f6]"
               style={{ fontSize: "clamp(13px,1.6vw,20px)", letterSpacing: ".5px" }}
             >
-              ONLY {pool.length} {pool.length === 1 ? "FILM" : "FILMS"} MATCH
+              ONLY {pool.length} {pool.length === 1 ? "MOVIE" : "MOVIES"} MATCH
             </h2>
             <p className="bc-mono mt-3 text-sm text-[#8d949c]">
               Open REFINE and remove a filter to widen the pool.
